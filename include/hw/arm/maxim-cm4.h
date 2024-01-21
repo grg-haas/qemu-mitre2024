@@ -14,6 +14,7 @@ struct MaximCM4State {
     MemoryRegion rom;
     MemoryRegion flash;
     MemoryRegion sram;
+    MemoryRegion mmio;
 
     // peripherals
     MemoryRegion icc0;

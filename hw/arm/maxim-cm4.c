@@ -135,23 +135,42 @@ static void maxim_cm4_initfn(Object *obj)
     s->refclk = qdev_init_clock_in(DEVICE(s), "refclk", NULL, NULL, 0);
 }
 
+static void create_unimplemented_device_mmio(const char *name,
+                                             hwaddr addr,
+                                             hwaddr size,
+                                             MemoryRegion *region)
+{
+    DeviceState *dev = qdev_new(TYPE_UNIMPLEMENTED_DEVICE);
+
+    qdev_prop_set_string(dev, "name", name);
+    qdev_prop_set_uint64(dev, "size", size);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
+    SysBusDevice *sysdev = SYS_BUS_DEVICE(dev);
+    sysdev->mmio[0].addr = addr;
+    memory_region_add_subregion(region, addr, sysdev->mmio[0].memory);
+}
+
 static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
 {
     MaximCM4State *mstate = MAXIM_CM4(dev_soc);
-    MemoryRegion *sysmem = get_system_memory();
+    MemoryRegion *sysmem = get_system_memory(), *c;
 
     clock_set_mul_div(mstate->refclk, 8, 1);
     clock_set_source(mstate->refclk, mstate->sysclk);
 
     /* Initialize core memory regions */
-    memory_region_init_rom(&mstate->rom, OBJECT(dev_soc), "rom", 512 * KiB, &error_fatal);
+    memory_region_init_rom(&mstate->rom, OBJECT(dev_soc), "rom", 512 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x00000000, &mstate->rom);
 
-    memory_region_init_rom(&mstate->flash, OBJECT(dev_soc), "flash", 512 * KiB, &error_fatal);
+    memory_region_init_rom(&mstate->flash, OBJECT(dev_soc), "flash", 512 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x10000000, &mstate->flash);
 
-    memory_region_init_ram(&mstate->sram, OBJECT(dev_soc), "sram", 128 * KiB, &error_fatal);
+    memory_region_init_ram(&mstate->sram, OBJECT(dev_soc), "sram", 128 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x20000000, &mstate->sram);
+
+    memory_region_init(&mstate->mmio, OBJECT(dev_soc), "mmio", UINT32_MAX);
+    memory_region_add_subregion_overlap(sysmem, 0x0, &mstate->mmio, -1000);
 
     /* Initialize CPU */
     DeviceState *armv7m = DEVICE(&mstate->armv7m);
@@ -167,26 +186,27 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
 
     mstate->chr = serial_hd(0);
     mstate->pending = false;
-
     qemu_chr_fe_init(&mstate->be, mstate->chr, &error_abort);
     qemu_chr_fe_set_handlers(&mstate->be, max78000_uart_can_receive, max78000_uart_receive, NULL, NULL, mstate, NULL, true);
-
     memory_region_init_io(&mstate->uart0, OBJECT(dev_soc), &max78000_uart_ops, mstate, "uart0", 0x800);
     memory_region_add_subregion(sysmem, MXC_BASE_UART0, &mstate->uart0);
 
-    create_unimplemented_device("gcr", MXC_BASE_GCR, 0x400);
-    create_unimplemented_device("lpgcr", MXC_BASE_LPGCR, 0x400);
+    c = &mstate->mmio;
+    create_unimplemented_device_mmio("gcr", MXC_BASE_GCR, 0x400, c);
 
-    create_unimplemented_device("gpio0", MXC_BASE_GPIO0, 0x1000);
-    create_unimplemented_device("gpio1", MXC_BASE_GPIO1, 0x1000);
-    create_unimplemented_device("gpio2", MXC_BASE_GPIO2, 0x1000);
-    create_unimplemented_device("uart0", MXC_BASE_UART0, 0x3000);
-    create_unimplemented_device("i2c0", MXC_BASE_I2C0, 0x1000);
-    create_unimplemented_device("i2c1", MXC_BASE_I2C1, 0x1000);
-    create_unimplemented_device("i2c2", MXC_BASE_I2C2, 0x1000);
+    create_unimplemented_device_mmio("gcr", MXC_BASE_GCR, 0x400, c);
+    create_unimplemented_device_mmio("lpgcr", MXC_BASE_LPGCR, 0x400, c);
 
-    create_unimplemented_device("simo", MXC_BASE_SIMO, 0x400);
-    create_unimplemented_device("flc0", MXC_BASE_FLC0, 0x400);
+    create_unimplemented_device_mmio("gpio0", MXC_BASE_GPIO0, 0x1000, c);
+    create_unimplemented_device_mmio("gpio1", MXC_BASE_GPIO1, 0x1000, c);
+    create_unimplemented_device_mmio("gpio2", MXC_BASE_GPIO2, 0x1000, c);
+    create_unimplemented_device_mmio("uart0", MXC_BASE_UART0, 0x3000, c);
+    create_unimplemented_device_mmio("i2c0", MXC_BASE_I2C0, 0x1000, c);
+    create_unimplemented_device_mmio("i2c1", MXC_BASE_I2C1, 0x1000, c);
+    create_unimplemented_device_mmio("i2c2", MXC_BASE_I2C2, 0x1000, c);
+
+    create_unimplemented_device_mmio("simo", MXC_BASE_SIMO, 0x400, c);
+    create_unimplemented_device_mmio("flc0", MXC_BASE_FLC0, 0x400, c);
 
 //    /* Load firmware */
 //    struct elf32_hdr ehdr;
