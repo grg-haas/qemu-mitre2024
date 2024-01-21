@@ -18,7 +18,10 @@ struct MaximCM4State {
 
     // peripherals
     MemoryRegion icc0;
+    MemoryRegion i2c1;
     MemoryRegion uart0;
+
+    void *i2c1_regs;
 
     // uart
     CharBackend be;

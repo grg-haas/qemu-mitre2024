@@ -18,9 +18,110 @@
 
 #include "max78000.h"
 #include "icc_reva_regs.h"
-#include "uart_regs.h"
+#include "i2c_reva_regs.h"
+#include "uart_revb_regs.h"
 
 /* Peripherals */
+
+// i2c
+
+#define I2C_OFFS(name) \
+    offsetof(mxc_i2c_reva_regs_t, name)
+
+#define NOP_I2C_FIELD(name) \
+    case I2C_OFFS(name):
+
+#define SET_I2C_FIELD(name) \
+    case I2C_OFFS(name): \
+        ((mxc_i2c_reva_regs_t *) mstate->i2c1_regs)->name = value; \
+        return MEMTX_OK;
+
+static MemTxResult max78000_i2c_read(void *opaque, hwaddr addr,
+                                     uint64_t *data, unsigned size,
+                                     MemTxAttrs attrs)
+{
+    MaximCM4State *mstate = opaque;
+    mxc_i2c_reva_regs_t *regs = mstate->i2c1_regs;
+
+    switch (addr) {
+        default:
+            return MEMTX_ERROR;
+
+        case I2C_OFFS(ctrl):;
+            uint64_t res = regs->ctrl;
+            if(regs->ctrl & MXC_F_I2C_REVA_CTRL_SDA_OUT) {
+                res |= MXC_F_I2C_REVA_CTRL_SDA;
+            }
+
+            if(regs->ctrl & MXC_F_I2C_REVA_CTRL_SCL_OUT) {
+                res |= MXC_F_I2C_REVA_CTRL_SCL;
+            }
+
+            *data = res;
+            return MEMTX_OK;
+
+        NOP_I2C_FIELD(status)
+        NOP_I2C_FIELD(intfl0)
+        NOP_I2C_FIELD(inten0)
+        NOP_I2C_FIELD(intfl1)
+        NOP_I2C_FIELD(inten1)
+        NOP_I2C_FIELD(fifolen)
+        NOP_I2C_FIELD(rxctrl0)
+        NOP_I2C_FIELD(rxctrl1)
+        NOP_I2C_FIELD(txctrl0)
+        NOP_I2C_FIELD(txctrl1)
+        NOP_I2C_FIELD(fifo)
+        NOP_I2C_FIELD(mstctrl)
+        NOP_I2C_FIELD(clklo)
+        NOP_I2C_FIELD(clkhi)
+        NOP_I2C_FIELD(hsclk)
+        NOP_I2C_FIELD(timeout)
+        NOP_I2C_FIELD(dma)
+        NOP_I2C_FIELD(slave)
+            *data = 0;
+            return MEMTX_OK;
+    }
+}
+
+static MemTxResult max78000_i2c_write(void *opaque, hwaddr addr,
+                                      uint64_t value, unsigned size,
+                                      MemTxAttrs attrs)
+{
+    MaximCM4State *mstate = opaque;
+    switch(addr) {
+        default:
+            return MEMTX_ERROR;
+
+        SET_I2C_FIELD(ctrl)
+
+        NOP_I2C_FIELD(status)
+        NOP_I2C_FIELD(intfl0)
+        NOP_I2C_FIELD(inten0)
+        NOP_I2C_FIELD(intfl1)
+        NOP_I2C_FIELD(inten1)
+        NOP_I2C_FIELD(fifolen)
+        NOP_I2C_FIELD(rxctrl0)
+        NOP_I2C_FIELD(rxctrl1)
+        NOP_I2C_FIELD(txctrl0)
+        NOP_I2C_FIELD(txctrl1)
+        NOP_I2C_FIELD(fifo)
+        NOP_I2C_FIELD(mstctrl)
+        NOP_I2C_FIELD(clklo)
+        NOP_I2C_FIELD(clkhi)
+        NOP_I2C_FIELD(hsclk)
+        NOP_I2C_FIELD(timeout)
+        NOP_I2C_FIELD(dma)
+        NOP_I2C_FIELD(slave)
+            return MEMTX_OK;
+
+    }
+}
+
+static const MemoryRegionOps max78000_i2c_ops = {
+        .read_with_attrs = max78000_i2c_read,
+        .write_with_attrs = max78000_i2c_write,
+};
+
 
 // uart
 static int max78000_uart_can_receive(void *opaque)
@@ -51,6 +152,12 @@ static void max78000_uart_receive(void *opaque, const uint8_t *buf, int size)
     }
 }
 
+#define UART_OFFS(name) \
+    offsetof(mxc_uart_revb_regs_t, name)
+
+#define NOP_UART_FIELD(name) \
+    case UART_OFFS(name):
+
 static MemTxResult max78000_uart_read(void *opaque, hwaddr addr,
                                       uint64_t *data, unsigned size,
                                       MemTxAttrs attrs)
@@ -58,11 +165,14 @@ static MemTxResult max78000_uart_read(void *opaque, hwaddr addr,
     MaximCM4State *mstate = opaque;
 
     switch(addr) {
-        case offsetof(mxc_uart_regs_t, status):
-            *data = (mstate->pending ? 1 : 0) << MXC_F_UART_STATUS_RX_LVL_POS;
-            break;
+        default:
+            return MEMTX_ERROR;
 
-        case offsetof(mxc_uart_regs_t, fifo):
+        case UART_OFFS(status):
+            *data = (mstate->pending ? 1 : 0) << MXC_F_UART_REVB_STATUS_RX_LVL_POS;
+            return MEMTX_OK;
+
+        case UART_OFFS(fifo):
             if(mstate->pending) {
                 qemu_chr_fe_accept_input(mstate->chr->be);
                 *((uint8_t *) data) = mstate->byte;
@@ -71,13 +181,21 @@ static MemTxResult max78000_uart_read(void *opaque, hwaddr addr,
             } else {
                 *((uint8_t *) data) = 0;
             }
-            break;
+            return MEMTX_OK;
 
-        default:
-            break;
+        NOP_UART_FIELD(ctrl)
+        NOP_UART_FIELD(int_en)
+        NOP_UART_FIELD(int_fl)
+        NOP_UART_FIELD(clkdiv)
+        NOP_UART_FIELD(osr)
+        NOP_UART_FIELD(txpeek)
+        NOP_UART_FIELD(pnr)
+        NOP_UART_FIELD(dma)
+        NOP_UART_FIELD(wken)
+        NOP_UART_FIELD(wkfl)
+            *data = 0;
+            return MEMTX_OK;
     }
-
-    return MEMTX_OK;
 }
 
 static MemTxResult max78000_uart_write(void *opaque, hwaddr addr,
@@ -85,13 +203,30 @@ static MemTxResult max78000_uart_write(void *opaque, hwaddr addr,
                                        MemTxAttrs attrs)
 {
     MaximCM4State *mstate = opaque;
-
     uint8_t buf;
-    if(addr == offsetof(mxc_uart_regs_t, fifo)) {
-        buf = (uint8_t) value & 0xFF;
-        qemu_chr_fe_write(mstate->chr->be, &buf, 1);
+
+    switch(addr) {
+        default:
+            return MEMTX_ERROR;
+
+        case UART_OFFS(fifo):
+            buf = (uint8_t) value & 0xFF;
+            qemu_chr_fe_write(mstate->chr->be, &buf, 1);
+            return MEMTX_OK;
+
+        NOP_UART_FIELD(ctrl)
+        NOP_UART_FIELD(status)
+        NOP_UART_FIELD(int_en)
+        NOP_UART_FIELD(int_fl)
+        NOP_UART_FIELD(clkdiv)
+        NOP_UART_FIELD(osr)
+        NOP_UART_FIELD(txpeek)
+        NOP_UART_FIELD(pnr)
+        NOP_UART_FIELD(dma)
+        NOP_UART_FIELD(wken)
+        NOP_UART_FIELD(wkfl)
+            return MEMTX_OK;
     }
-    return MEMTX_OK;
 }
 
 static const MemoryRegionOps max78000_uart_ops = {
@@ -101,23 +236,46 @@ static const MemoryRegionOps max78000_uart_ops = {
 
 // icc0
 
+#define ICC_OFFS(name) \
+    offsetof(mxc_icc_reva_regs_t, name)
+
+#define NOP_ICC_FIELD(name) \
+    case ICC_OFFS(name):
+
 static MemTxResult max78000_icc_read(void *opaque, hwaddr addr,
                                      uint64_t *data, unsigned size,
                                      MemTxAttrs attrs)
 {
-    // Pretend icc is always ready
-    if(addr == offsetof(mxc_icc_reva_regs_t, ctrl)) {
-        *data = MXC_F_ICC_REVA_CTRL_RDY;
-    }
+    switch(addr) {
+        default:
+            return MEMTX_ERROR;
 
-    return MEMTX_OK;
+        case ICC_OFFS(ctrl):
+            *data = MXC_F_ICC_REVA_CTRL_RDY;
+            return MEMTX_OK;
+
+        NOP_ICC_FIELD(info)
+        NOP_ICC_FIELD(sz)
+        NOP_ICC_FIELD(invalidate)
+            *data = 0;
+            return MEMTX_OK;
+    }
 }
 
 static MemTxResult max78000_icc_write(void *opaque, hwaddr addr,
                                       uint64_t value, unsigned size,
                                       MemTxAttrs attrs)
 {
-    return MEMTX_OK;
+    switch(addr) {
+        default:
+            return MEMTX_ERROR;
+
+        NOP_ICC_FIELD(ctrl)
+        NOP_ICC_FIELD(info)
+        NOP_ICC_FIELD(sz)
+        NOP_ICC_FIELD(invalidate)
+            return MEMTX_OK;
+    }
 }
 
 static const MemoryRegionOps max78000_icc_ops = {
@@ -184,6 +342,10 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
     memory_region_init_io(&mstate->icc0, OBJECT(dev_soc), &max78000_icc_ops, mstate, "icc0", 0x800);
     memory_region_add_subregion(sysmem, MXC_BASE_ICC0, &mstate->icc0);
 
+    mstate->i2c1_regs = g_malloc0(sizeof(mxc_i2c_reva_regs_t));
+    memory_region_init_io(&mstate->i2c1, OBJECT(dev_soc), &max78000_i2c_ops, mstate, "i2c1", 0x1000);
+    memory_region_add_subregion(sysmem, MXC_BASE_I2C1, &mstate->i2c1);
+
     mstate->chr = serial_hd(0);
     mstate->pending = false;
     qemu_chr_fe_init(&mstate->be, mstate->chr, &error_abort);
@@ -202,7 +364,7 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
     create_unimplemented_device_mmio("gpio2", MXC_BASE_GPIO2, 0x1000, c);
     create_unimplemented_device_mmio("uart0", MXC_BASE_UART0, 0x3000, c);
     create_unimplemented_device_mmio("i2c0", MXC_BASE_I2C0, 0x1000, c);
-    create_unimplemented_device_mmio("i2c1", MXC_BASE_I2C1, 0x1000, c);
+//    create_unimplemented_device_mmio("i2c1", MXC_BASE_I2C1, 0x1000, c);
     create_unimplemented_device_mmio("i2c2", MXC_BASE_I2C2, 0x1000, c);
 
     create_unimplemented_device_mmio("simo", MXC_BASE_SIMO, 0x400, c);
