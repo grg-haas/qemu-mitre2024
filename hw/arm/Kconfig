@@ -610,6 +610,11 @@ config FSL_IMX6UL
     select SDHCI
     select UNIMP
 
+config MAXIM_MAX78000
+    bool
+    default y
+    depends on TCG && ARM
+
 config MICROBIT
     bool
     default y

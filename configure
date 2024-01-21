@@ -177,6 +177,7 @@ cpu=""
 cross_compile="no"
 cross_prefix=""
 host_cc="cc"
+mitre_design=""
 EXTRA_CFLAGS=""
 EXTRA_CXXFLAGS=""
 EXTRA_OBJCFLAGS=""
@@ -757,6 +758,8 @@ for opt do
   ;;
   --gdb=*) gdb_bin="$optarg"
   ;;
+  --mitre-design=*) mitre_design="$optarg"
+  ;;
   # everything else has the same name in configure and meson
   --*) meson_option_parse "$opt" "$optarg"
   ;;
@@ -765,6 +768,13 @@ for opt do
   ;;
   esac
 done
+
+if test ! -z "$mitre_design"; then
+  MITRE_CFLAGS=$(MAXIM_PATH="$mitre_design/msdk" make -C "$mitre_design/application_processor" -np | \
+                    grep "IPATH :=" | tr ' ' '\n' | \
+                    tail -n +7 | awk '{print "-I" $0}' | tr '\n' ' ')
+  EXTRA_CFLAGS="$MITRE_CFLAGS $EXTRA_CFLAGS"
+fi
 
 if ! test -e "$source_path/.git"
 then
