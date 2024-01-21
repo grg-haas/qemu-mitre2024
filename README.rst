@@ -14,8 +14,10 @@ holds the :code:`application_processor` and :code:`msdk` directories.
 
   mkdir build
   cd build
-  ../configure --enable-debug --disable-strip --without-default-features --disable-werror --enable-system \
-	--target-list="arm-softmmu" --mitre-design=<path to mitre design>
+  ../configure --enable-debug --disable-strip \
+	--without-default-features --disable-werror \
+	--enable-system --target-list="arm-softmmu" \
+	--mitre-design=<path to mitre design>
   make -j$(nproc)
 
 Running
