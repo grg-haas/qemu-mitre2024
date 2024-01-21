@@ -28,7 +28,7 @@ To just run the simulator without GDB, omit :code:`-S -gdb tcp::9822`.
 
 .. code-block:: shell
 
-  ./build/qemu-system-arm -machine max78000 -serial stdio -S -gdb tcp::9822
+  ./build/qemu-system-arm -machine max78000 -serial stdio -kernel <path to ap.elf> -S -gdb tcp::9822
 
 Then, you can connect GDB to the simulator by running :code:`arm-none-eabi-gdb`, then typing:
 

@@ -41,10 +41,8 @@ static void maxim_max78000_init(MachineState *machine) {
     bool is_elf64;
     struct entrypoint *entrypoint;
 
-    load_elf_hdr("/home/grg/Projects/2024-ectf-insecure-example/application_processor/build/max78000.elf", &ehdr,
-                 &is_elf64, &error_abort);
-    armv7m_load_kernel(ARM_CPU(first_cpu),
-                       "/home/grg/Projects/2024-ectf-insecure-example/application_processor/build/max78000.elf", 0, 0);
+    load_elf_hdr(machine->kernel_filename, &ehdr, &is_elf64, &error_abort);
+    armv7m_load_kernel(ARM_CPU(first_cpu), machine->kernel_filename, 0, 0);
 
     entrypoint = g_malloc(sizeof(struct entrypoint));
     entrypoint->cpu = first_cpu;

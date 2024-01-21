@@ -144,13 +144,13 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
     clock_set_source(mstate->refclk, mstate->sysclk);
 
     /* Initialize core memory regions */
-    memory_region_init_rom(&mstate->rom, NULL, "rom", 512 * KiB, &error_fatal);
+    memory_region_init_rom(&mstate->rom, OBJECT(dev_soc), "rom", 512 * KiB, &error_fatal);
     memory_region_add_subregion(sysmem, 0x00000000, &mstate->rom);
 
-    memory_region_init_rom(&mstate->flash, NULL, "flash", 512 * KiB, &error_fatal);
+    memory_region_init_rom(&mstate->flash, OBJECT(dev_soc), "flash", 512 * KiB, &error_fatal);
     memory_region_add_subregion(sysmem, 0x10000000, &mstate->flash);
 
-    memory_region_init_ram(&mstate->sram, NULL, "sram", 128 * KiB, &error_fatal);
+    memory_region_init_ram(&mstate->sram, OBJECT(dev_soc), "sram", 128 * KiB, &error_fatal);
     memory_region_add_subregion(sysmem, 0x20000000, &mstate->sram);
 
     /* Initialize CPU */
@@ -162,7 +162,7 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
     sysbus_realize(SYS_BUS_DEVICE(&mstate->armv7m), &error_abort);
 
     /* Initialize peripherals */
-    memory_region_init_io(&mstate->icc0, OBJECT(mstate), &max78000_icc_ops, mstate, "icc0", 0x800);
+    memory_region_init_io(&mstate->icc0, OBJECT(dev_soc), &max78000_icc_ops, mstate, "icc0", 0x800);
     memory_region_add_subregion(sysmem, MXC_BASE_ICC0, &mstate->icc0);
 
     mstate->chr = serial_hd(0);
@@ -171,7 +171,7 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
     qemu_chr_fe_init(&mstate->be, mstate->chr, &error_abort);
     qemu_chr_fe_set_handlers(&mstate->be, max78000_uart_can_receive, max78000_uart_receive, NULL, NULL, mstate, NULL, true);
 
-    memory_region_init_io(&mstate->uart0, OBJECT(mstate), &max78000_uart_ops, mstate, "uart0", 0x800);
+    memory_region_init_io(&mstate->uart0, OBJECT(dev_soc), &max78000_uart_ops, mstate, "uart0", 0x800);
     memory_region_add_subregion(sysmem, MXC_BASE_UART0, &mstate->uart0);
 
     create_unimplemented_device("gcr", MXC_BASE_GCR, 0x400);
