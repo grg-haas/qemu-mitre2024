@@ -3,14 +3,13 @@
 #include "hw/boards.h"
 #include "hw/qdev-properties.h"
 #include "hw/qdev-clock.h"
-#include "qemu/error-report.h"
 #include "hw/arm/maxim-cm4.h"
 #include "hw/arm/boot.h"
 #include "elf.h"
 #include "hw/loader.h"
 #include "sysemu/reset.h"
 
-/* Main SYSCLK frequency in Hz (24MHz) */
+/* Board definition */
 #define SYSCLK_FRQ 24000000ULL
 
 struct entrypoint {
@@ -24,11 +23,15 @@ static void maxim_max78000_set_entrypoint(void *opaque) {
     g_free(entrypoint);
 }
 
-static void maxim_max78000_init_cpu(MachineState *machine, Clock *sysclk, int id){
+static MaximCM4State *maxim_max78000_init_cpu(Clock *sysclk, int id) {
     DeviceState *dev = qdev_new(TYPE_MAXIM_CM4);
+    MaximCM4State *mstate = MAXIM_CM4(dev);
+
     qdev_connect_clock_in(dev, "sysclk", sysclk);
     qdev_prop_set_int32(dev, "id", id);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
+    return mstate;
 }
 
 static void maxim_max78000_load_firmware(ARMCPU *cpu, char *firmware) {
@@ -36,37 +39,56 @@ static void maxim_max78000_load_firmware(ARMCPU *cpu, char *firmware) {
     bool is_elf64;
     struct entrypoint *entrypoint;
 
+    if(!firmware) {
+        return;
+    }
+
     load_elf_hdr(firmware, &ehdr, &is_elf64, &error_abort);
     armv7m_load_kernel(cpu, firmware, 0, 0);
+
+    // armv7m_load_kernel registers a reset of the CPU, which is necessary
+    // in order for the system to come up directly. Unfortunately, this would
+    // also trash the entrypoint if we were to set it here with cpu_set_pc.
+    // Therefore, we need to register our own reset function to run after
+    // theirs, so that the CPUs start up at the correct address.
 
     entrypoint = g_malloc(sizeof(struct entrypoint));
     entrypoint->cpu = CPU(cpu);
     entrypoint->addr = (vaddr) ehdr.e_entry;
-
     qemu_register_reset(maxim_max78000_set_entrypoint, (void *) entrypoint);
 }
 
 static void maxim_max78000_init(MachineState *machine) {
     int i;
     CPUState *cpu;
+    MaximCM4State *dev, *ap;
 
     /* Initialize processors */
     Clock *sysclk = clock_new(OBJECT(machine), "SYSCLK");
     clock_set_hz(sysclk, SYSCLK_FRQ);
 
-    for(i = 0; i < 3; i++) {
-        maxim_max78000_init_cpu(machine, sysclk, i);
+    for(i = 0; i < 1 + COMPONENT_CNT; i++) {
+        dev = maxim_max78000_init_cpu(sysclk, i);
+
+        // Also connect i2c buses
+        if(i == 0) {
+            ap = dev;
+        } else {
+            ap->i2c_irq_comp[i - 1] = dev->i2c_irq;
+            ap->i2c_req_comp[i - 1] = &dev->i2c_req;
+        }
     }
 
     /* Load firmware */
     i = 0;
     CPU_FOREACH(cpu) {
         if(i == 0) {
+            // AP uses the "kernel" firmware
             maxim_max78000_load_firmware(ARM_CPU(cpu), machine->kernel_filename);
         } else {
+            // Components use the "bios" firmware
             maxim_max78000_load_firmware(ARM_CPU(cpu), machine->firmware);
         }
-
         i++;
     }
 }

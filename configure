@@ -773,7 +773,7 @@ if test ! -z "$mitre_design"; then
   MITRE_CFLAGS=$(MAXIM_PATH="$mitre_design/msdk" make -C "$mitre_design/application_processor" -np | \
                     grep "IPATH :=" | tr ' ' '\n' | \
                     tail -n +7 | awk '{print "-I" $0}' | tr '\n' ' ')
-  EXTRA_CFLAGS="$MITRE_CFLAGS $EXTRA_CFLAGS"
+  EXTRA_CFLAGS="$MITRE_CFLAGS -I$mitre_design/application_processor/inc $EXTRA_CFLAGS"
 fi
 
 if ! test -e "$source_path/.git"
