@@ -311,23 +311,37 @@ static void create_unimplemented_device_mmio(const char *name,
 
 static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
 {
+    char buf[128];
     MaximCM4State *mstate = MAXIM_CM4(dev_soc);
-    MemoryRegion *sysmem = get_system_memory(), *c;
+    MemoryRegion *sysmem, *c;
+
+    if(mstate->id == -1) {
+        error_setg(errp, "CM4 id must be set");
+        return;
+    }
 
     clock_set_mul_div(mstate->refclk, 8, 1);
     clock_set_source(mstate->refclk, mstate->sysclk);
 
     /* Initialize core memory regions */
-    memory_region_init_rom(&mstate->rom, OBJECT(dev_soc), "rom", 512 * KiB, &error_abort);
+    snprintf(buf, sizeof(buf), "main%i", mstate->id);
+    memory_region_init(&mstate->main, OBJECT(dev_soc), buf, UINT32_MAX);
+    sysmem = &mstate->main;
+
+    snprintf(buf, sizeof(buf), "rom%i", mstate->id);
+    memory_region_init_rom(&mstate->rom, OBJECT(dev_soc), buf, 512 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x00000000, &mstate->rom);
 
-    memory_region_init_rom(&mstate->flash, OBJECT(dev_soc), "flash", 512 * KiB, &error_abort);
+    snprintf(buf, sizeof(buf), "flash%i", mstate->id);
+    memory_region_init_rom(&mstate->flash, OBJECT(dev_soc), buf, 512 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x10000000, &mstate->flash);
 
-    memory_region_init_ram(&mstate->sram, OBJECT(dev_soc), "sram", 128 * KiB, &error_abort);
+    snprintf(buf, sizeof(buf), "sram%i", mstate->id);
+    memory_region_init_ram(&mstate->sram, OBJECT(dev_soc), buf, 128 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x20000000, &mstate->sram);
 
-    memory_region_init(&mstate->mmio, OBJECT(dev_soc), "mmio", UINT32_MAX);
+    snprintf(buf, sizeof(buf), "mmio%i", mstate->id);
+    memory_region_init(&mstate->mmio, OBJECT(dev_soc), buf, UINT32_MAX);
     memory_region_add_subregion_overlap(sysmem, 0x0, &mstate->mmio, -1000);
 
     /* Initialize CPU */
@@ -346,12 +360,15 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
     memory_region_init_io(&mstate->i2c1, OBJECT(dev_soc), &max78000_i2c_ops, mstate, "i2c1", 0x1000);
     memory_region_add_subregion(sysmem, MXC_BASE_I2C1, &mstate->i2c1);
 
-    mstate->chr = serial_hd(0);
-    mstate->pending = false;
-    qemu_chr_fe_init(&mstate->be, mstate->chr, &error_abort);
-    qemu_chr_fe_set_handlers(&mstate->be, max78000_uart_can_receive, max78000_uart_receive, NULL, NULL, mstate, NULL, true);
-    memory_region_init_io(&mstate->uart0, OBJECT(dev_soc), &max78000_uart_ops, mstate, "uart0", 0x800);
-    memory_region_add_subregion(sysmem, MXC_BASE_UART0, &mstate->uart0);
+    mstate->chr = serial_hd(mstate->id);
+    if(mstate->chr) {
+        mstate->pending = false;
+        qemu_chr_fe_init(&mstate->be, mstate->chr, &error_abort);
+        qemu_chr_fe_set_handlers(&mstate->be, max78000_uart_can_receive, max78000_uart_receive, NULL, NULL, mstate, NULL, true);
+        memory_region_init_io(&mstate->uart0, OBJECT(dev_soc), &max78000_uart_ops, mstate, "uart0", 0x800);
+        memory_region_add_subregion(sysmem, MXC_BASE_UART0, &mstate->uart0);
+    }
+
 
     c = &mstate->mmio;
     create_unimplemented_device_mmio("gcr", MXC_BASE_GCR, 0x400, c);
@@ -385,12 +402,17 @@ static void maxim_cm4_realize(DeviceState *dev_soc, Error **errp)
 //    qemu_register_reset(maxim_max78000_set_entrypoint, (void *) entrypoint);
 }
 
+static Property maxim_cm4_properties[] = {
+        DEFINE_PROP_INT32("id", MaximCM4State, id, -1),
+        DEFINE_PROP_END_OF_LIST(),
+};
 
 static void maxim_cm4_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = maxim_cm4_realize;
+    device_class_set_props(dc, maxim_cm4_properties);
 }
 
 static const TypeInfo  maxim_cm4_info = {

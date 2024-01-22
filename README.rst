@@ -24,11 +24,16 @@ Running
 =======
 
 To run the simulator such that it waits for a GDB connection before starting, run the command below.
-To just run the simulator without GDB, omit :code:`-S -gdb tcp::9822`.
+To just run the simulator without GDB, omit the last line: :code:`-S -gdb tcp::9822`.
+All other options are mandatory, the simulator will likely not work without them.
 
 .. code-block:: shell
 
-  ./build/qemu-system-arm -machine max78000 -nographic -kernel <path to ap.elf> -S -gdb tcp::9822
+  ./build/qemu-system-arm \
+	-machine max78000 -smp 3 \
+	-serial stdio -serial file:/tmp/comp1.out -serial file:/tmp/comp2.out \
+	-kernel <path to ap.elf> -bios <path to comp.elf> \
+	 -S -gdb tcp::9822
 
 Then, you can connect GDB to the simulator by running :code:`arm-none-eabi-gdb`, then typing:
 
@@ -36,3 +41,8 @@ Then, you can connect GDB to the simulator by running :code:`arm-none-eabi-gdb`,
 
   target remote :9822
   add-symbol-file <path to ap.elf>
+
+Any :code:`printf`'s from the AP get echoed to :code:`stdout`, where you run QEMU. The :code:`printf`'s
+from the components get sent to :code:`/tmp/comp1.out` and :code:`/tmp/comp2.out`, if you run as
+configured above. NOTE THAT THE ORDER OF THESE OPTIONS MATTERS. The first :code:`-serial` option always
+corresponds to the AP, and the next ones always correspond to components 1 and 2 respectively.

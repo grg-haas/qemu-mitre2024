@@ -10,7 +10,13 @@ struct MaximCM4State {
     /* private */
     SysBusDevice parent_obj;
 
+    /* public */
+
+    // config
+    int id;
+
     // memory regions
+    MemoryRegion main;
     MemoryRegion rom;
     MemoryRegion flash;
     MemoryRegion sram;
