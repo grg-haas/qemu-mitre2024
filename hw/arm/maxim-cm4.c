@@ -10,7 +10,6 @@
 #include "sysemu/sysemu.h"
 #include "chardev/char-fe.h"
 #include "hw/loader.h"
-#include "hw/irq.h"
 
 #define __PROGRAM_START
 #define __CMSIS_GENERIC
@@ -21,191 +20,6 @@
 #include "uart_revb_regs.h"
 
 /* Peripherals */
-
-// i2c
-
-#define I2C_OFFS(name) \
-    offsetof(mxc_i2c_reva_regs_t, name)
-
-#define NOP_I2C_FIELD(name) \
-    case I2C_OFFS(name):
-
-#define SET_I2C_FIELD(name) \
-    case I2C_OFFS(name): \
-        ((mxc_i2c_reva_regs_t *) mstate->i2c1_regs)->name = value; \
-        return MEMTX_OK;
-
-#define GET_I2C_FIELD(name) \
-    case I2C_OFFS(name): \
-        *data = ((mxc_i2c_reva_regs_t *) mstate->i2c1_regs)->name; \
-        return MEMTX_OK;
-
-static MemTxResult max78000_i2c_read(void *opaque, hwaddr addr,
-                                     uint64_t *data, unsigned size,
-                                     MemTxAttrs attrs)
-{
-    uint64_t res;
-    MaximCM4State *mstate = opaque;
-    mxc_i2c_reva_regs_t *regs = mstate->i2c1_regs;
-
-    switch (addr) {
-        default:
-            return MEMTX_ERROR;
-
-        case I2C_OFFS(ctrl):
-            res = regs->ctrl;
-            if(regs->ctrl & MXC_F_I2C_REVA_CTRL_SDA_OUT) {
-                res |= MXC_F_I2C_REVA_CTRL_SDA;
-            }
-
-            if(regs->ctrl & MXC_F_I2C_REVA_CTRL_SCL_OUT) {
-                res |= MXC_F_I2C_REVA_CTRL_SCL;
-            }
-
-            *data = res;
-            return MEMTX_OK;
-
-        GET_I2C_FIELD(intfl0)
-
-        NOP_I2C_FIELD(status)
-        NOP_I2C_FIELD(inten0)
-        NOP_I2C_FIELD(intfl1)
-        NOP_I2C_FIELD(inten1)
-        NOP_I2C_FIELD(fifolen)
-        NOP_I2C_FIELD(rxctrl0)
-        NOP_I2C_FIELD(rxctrl1)
-        NOP_I2C_FIELD(txctrl0)
-        NOP_I2C_FIELD(txctrl1)
-        NOP_I2C_FIELD(fifo)
-        NOP_I2C_FIELD(mstctrl)
-        NOP_I2C_FIELD(clklo)
-        NOP_I2C_FIELD(clkhi)
-        NOP_I2C_FIELD(hsclk)
-        NOP_I2C_FIELD(timeout)
-        NOP_I2C_FIELD(dma)
-        NOP_I2C_FIELD(slave)
-            *data = 0;
-            return MEMTX_OK;
-    }
-}
-
-static MemTxResult max78000_i2c_write(void *opaque, hwaddr addr,
-                                      uint64_t value, unsigned size,
-                                      MemTxAttrs attrs)
-{
-    MaximCM4State *mstate = opaque;
-    mxc_i2c_reva_regs_t *regs = mstate->i2c1_regs;
-
-    int i;
-    uint32_t component_ids[COMPONENT_CNT] = {COMPONENT_IDS};
-
-    switch(addr) {
-        default:
-            return MEMTX_ERROR;
-
-        SET_I2C_FIELD(ctrl)
-
-        case I2C_OFFS(fifo):
-            switch(mstate->i2c_state) {
-                case CM4_I2C_DATA:
-                    mstate->i2c_req.data[mstate->i2c_req.ptr] = value;
-                    mstate->i2c_req.ptr++;
-
-                    if(mstate->i2c_req.ptr == sizeof(mstate->i2c_req.data)) {
-                        fprintf(stderr, "FATAL: i2c buffer full\n");
-                        exit(-1);
-                    }
-                    break;
-
-                case CM4_I2C_ADDR:
-                    mstate->i2c_req.addr = value >> 1;
-
-                    // Check if the address is valid
-                    for(i = 0; i < COMPONENT_CNT; i++) {
-                        if(mstate->i2c_req.addr == (component_ids[i] & 0x000000FF)) {
-                            mstate->i2c_req.ptr = 0;
-                            mstate->i2c_state = CM4_I2C_DATA;
-                            break;
-                        }
-                    }
-
-                    if(i == COMPONENT_CNT) {
-                        // Not valid
-                        regs->intfl0 |= MXC_F_I2C_REVA_INTFL0_ADDR_NACK_ERR;
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-
-            return MEMTX_OK;
-
-        case I2C_OFFS(mstctrl):
-            if(value & MXC_F_I2C_REVA_MSTCTRL_START) {
-                if(mstate->i2c_running) {
-                    return MEMTX_ERROR;
-                } else {
-                    mstate->i2c_running = true;
-                }
-            }
-            else if(value &MXC_F_I2C_REVA_MSTCTRL_STOP) {
-                if(mstate->i2c_running) {
-                    // Check if this is to one of the components
-                    for(i = 0; i < COMPONENT_CNT; i++) {
-                        if(mstate->i2c_req.addr == (component_ids[i] & 0x000000FF)) {
-                            memcpy(mstate->i2c_req_comp[i], &mstate->i2c_req, sizeof(MaximCM4I2CRequest));
-                            qemu_irq_raise(mstate->i2c_irq_comp[i]);
-                            break;
-                        }
-                    }
-
-                    // Signal that transfer happened
-                    regs->intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP | MXC_F_I2C_REVA_INTFL0_DONE;
-
-                    // Reset state
-                    mstate->i2c_running = false;
-                    mstate->i2c_state = CM4_I2C_ADDR;
-                    memset(&mstate->i2c_req, 0, sizeof(MaximCM4I2CState));
-                } else {
-                    return MEMTX_ERROR;
-                }
-            }
-
-            return MEMTX_OK;
-
-        case I2C_OFFS(intfl0):
-            regs->intfl0 &= ~value;
-
-            // Always have more room to send
-            regs->intfl0 |= MXC_F_I2C_REVA_INTEN0_TX_THD;
-            return MEMTX_OK;
-
-        NOP_I2C_FIELD(status)
-        NOP_I2C_FIELD(inten0)
-        NOP_I2C_FIELD(intfl1)
-        NOP_I2C_FIELD(inten1)
-        NOP_I2C_FIELD(fifolen)
-        NOP_I2C_FIELD(rxctrl0)
-        NOP_I2C_FIELD(rxctrl1)
-        NOP_I2C_FIELD(txctrl0)
-        NOP_I2C_FIELD(txctrl1)
-        NOP_I2C_FIELD(clklo)
-        NOP_I2C_FIELD(clkhi)
-        NOP_I2C_FIELD(hsclk)
-        NOP_I2C_FIELD(timeout)
-        NOP_I2C_FIELD(dma)
-        NOP_I2C_FIELD(slave)
-            return MEMTX_OK;
-
-    }
-}
-
-static const MemoryRegionOps max78000_i2c_ops = {
-        .read_with_attrs = max78000_i2c_read,
-        .write_with_attrs = max78000_i2c_write,
-};
-
 
 // uart
 
@@ -438,17 +252,14 @@ static void maxim_cm4_realize_cpu(MaximCM4State *mstate, MemoryRegion *sysmem) {
 static void maxim_cm4_realize_peripherals(MaximCM4State *mstate, MemoryRegion *sysmem, MemoryRegion *mmiomem) {
     /* Named peripherals first */
 
-    // Initialize i2c regs -- always ready to receive (THD)
-    mxc_i2c_reva_regs_t *i2c_regs;
-    i2c_regs = g_malloc0(sizeof(mxc_i2c_reva_regs_t));
-    i2c_regs->intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
-    mstate->i2c1_regs = i2c_regs;
-
-    // Set up i2c state machine and interface
-    mstate->i2c_state = CM4_I2C_ADDR;
-    mstate->i2c_irq = qdev_get_gpio_in(DEVICE(&mstate->armv7m), I2C1_IRQn);
-    memory_region_init_io(&mstate->i2c1, OBJECT(mstate), &max78000_i2c_ops, mstate, "i2c1", 0x1000);
-    memory_region_add_subregion(sysmem, MXC_BASE_I2C1, &mstate->i2c1);
+    // I2C
+    qemu_irq i2c_irq = qdev_get_gpio_in(DEVICE(&mstate->armv7m), I2C1_IRQn);
+    DeviceState *dev = qdev_new(TYPE_MXC_I2C_INITIATOR);
+    qdev_prop_set_uint64(dev, "base", MXC_BASE_I2C1);
+    object_property_set_link(OBJECT(dev), "mmiomem", OBJECT(mmiomem), &error_abort);
+    object_property_set_link(OBJECT(dev), "irq", OBJECT(i2c_irq), &error_abort);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_abort);
+    mstate->i2c1 = MXC_I2C_INITIATOR(dev);
 
     // UART, either real or mocked depending on what's needed
     mstate->chr = serial_hd(mstate->id);

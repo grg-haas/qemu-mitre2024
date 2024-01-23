@@ -614,6 +614,8 @@ config MAXIM_MAX78000
     bool
     default y
     depends on TCG && ARM
+    imply I2C_DEVICES
+    select I2C
 
 config MICROBIT
     bool

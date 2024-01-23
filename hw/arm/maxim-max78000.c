@@ -8,6 +8,7 @@
 #include "elf.h"
 #include "hw/loader.h"
 #include "sysemu/reset.h"
+#include "hw/i2c/i2c.h"
 
 /* Board definition */
 #define SYSCLK_FRQ 24000000ULL
@@ -29,7 +30,7 @@ static MaximCM4State *maxim_max78000_init_cpu(Clock *sysclk, int id) {
 
     qdev_connect_clock_in(dev, "sysclk", sysclk);
     qdev_prop_set_int32(dev, "id", id);
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_abort);
 
     return mstate;
 }
@@ -62,6 +63,9 @@ static void maxim_max78000_init(MachineState *machine) {
     int i;
     CPUState *cpu;
     MaximCM4State *dev, *ap;
+    I2CSlave *target;
+
+    uint32_t component_ids[COMPONENT_CNT] = {COMPONENT_IDS};
 
     /* Initialize processors */
     Clock *sysclk = clock_new(OBJECT(machine), "SYSCLK");
@@ -74,8 +78,12 @@ static void maxim_max78000_init(MachineState *machine) {
         if(i == 0) {
             ap = dev;
         } else {
-            ap->i2c_irq_comp[i - 1] = dev->i2c_irq;
-            ap->i2c_req_comp[i - 1] = &dev->i2c_req;
+            target = i2c_slave_new(TYPE_MXC_I2C_TARGET, component_ids[i - 1] & 0xFF);
+            object_property_set_link(OBJECT(target), "target", OBJECT(dev->i2c1), &error_abort);
+            qdev_realize_and_unref(DEVICE(target), BUS(ap->i2c1->bus), &error_abort);
+
+            // Hacky...
+            dev->i2c1->initiator = ap->i2c1;
         }
     }
 
