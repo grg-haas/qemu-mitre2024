@@ -37,7 +37,9 @@ struct MXCI2CInitiatorState {
     MemoryRegion iomem;
 
     // state machine
-    bool sending, stop_pending;
+    bool writing, reading;
+    bool start_pending;
+    bool interrupt;
     MaximCM4I2CState state;
     uint8_t addr;
     uint8_t fifo[8], ptr;

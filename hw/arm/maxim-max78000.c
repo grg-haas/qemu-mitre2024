@@ -35,7 +35,7 @@ static MaximCM4State *maxim_max78000_init_cpu(Clock *sysclk, int id) {
     return mstate;
 }
 
-static void maxim_max78000_load_firmware(ARMCPU *cpu, char *firmware) {
+static void maxim_max78000_load_firmware(ARMCPU *cpu, const char *firmware) {
     struct elf32_hdr ehdr;
     bool is_elf64;
     struct entrypoint *entrypoint;
@@ -59,8 +59,14 @@ static void maxim_max78000_load_firmware(ARMCPU *cpu, char *firmware) {
     qemu_register_reset(maxim_max78000_set_entrypoint, (void *) entrypoint);
 }
 
+#define FW_STRLEN   256
+static char ap_firmware[FW_STRLEN] = {0},
+                comp1_firmware[FW_STRLEN] = {0},
+                comp2_firmware[FW_STRLEN] = {0};
+
 static void maxim_max78000_init(MachineState *machine) {
     int i;
+    const char *firmware = NULL;
     CPUState *cpu;
     MaximCM4State *dev, *ap;
     I2CSlave *target;
@@ -90,18 +96,63 @@ static void maxim_max78000_init(MachineState *machine) {
     /* Load firmware */
     i = 0;
     CPU_FOREACH(cpu) {
-        if(i == 0) {
-            // AP uses the "kernel" firmware
-            maxim_max78000_load_firmware(ARM_CPU(cpu), machine->kernel_filename);
-        } else {
-            // Components use the "bios" firmware
-            maxim_max78000_load_firmware(ARM_CPU(cpu), machine->firmware);
+        firmware = NULL;
+        switch(i) {
+            case 0:
+                firmware = ap_firmware;
+                break;
+
+            case 1:
+                firmware = comp1_firmware;
+                break;
+
+            case 2:
+                firmware = comp2_firmware;
+                break;
+
+            default:
+                fprintf(stderr, "Too many CPUs");
+                exit(-1);
         }
+
+        if(!firmware[0]) {
+            fprintf(stderr, "No firmware for CPU %i\n", i);
+            exit(-1);
+        }
+
+        maxim_max78000_load_firmware(ARM_CPU(cpu), firmware);
         i++;
     }
 }
 
+
+static char *get_ap_firmware(Object *obj, Error **errp) {
+    return (char *) ap_firmware;
+}
+
+static void set_ap_firmware(Object *obj, const char *value, Error **errp) {
+    strncpy(ap_firmware, value, FW_STRLEN);
+}
+
+static char *get_comp1_firmware(Object *obj, Error **errp) {
+    return (char *) comp1_firmware;
+}
+
+static void set_comp1_firmware(Object *obj, const char *value, Error **errp) {
+    strncpy(comp1_firmware, value, FW_STRLEN);
+}
+
+static char *get_comp2_firmware(Object *obj, Error **errp) {
+    return (char *) comp2_firmware;
+}
+
+static void set_comp2_firmware(Object *obj, const char *value, Error **errp) {
+    strncpy(comp2_firmware, value, FW_STRLEN);
+}
+
 static void maxim_max78000_machine_init(MachineClass *mc) {
+    ObjectClass *oc = OBJECT_CLASS(mc);
+
     static const char *const valid_cpu_types[] = {
             ARM_CPU_TYPE_NAME("cortex-m4"),
             NULL
@@ -113,6 +164,11 @@ static void maxim_max78000_machine_init(MachineClass *mc) {
     mc->valid_cpu_types = valid_cpu_types;
     mc->max_cpus = 3;
     mc->min_cpus = 3;
+
+    object_class_property_add_str(oc, "ap", get_ap_firmware, set_ap_firmware);
+    object_class_property_add_str(oc, "comp1", get_comp1_firmware, set_comp1_firmware);
+    object_class_property_add_str(oc, "comp2", get_comp2_firmware, set_comp2_firmware);
+
 }
 
 DEFINE_MACHINE("maxim-max78000", maxim_max78000_machine_init)
