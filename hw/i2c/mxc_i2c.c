@@ -28,13 +28,11 @@ static void mxc_i2c_target_refresh_interrupt(MXCI2CInitiatorState *controller) {
     // Interrupt should be high if there is a pending flag for an enabled line
     if(controller->regs.intfl0 & controller->regs.inten0) {
         if(!controller->interrupt) {
-            // fprintf(stderr, "target: raising interrupt\n");
             controller->interrupt = true;
         }
         qemu_irq_raise(controller->irq);
     } else {
         if(controller->interrupt) {
-            // fprintf(stderr, "target: lowering interrupt\n");
             controller->interrupt = false;
         }
         qemu_irq_lower(controller->irq);
@@ -87,14 +85,34 @@ static uint64_t i2c_read_initiator(MXCI2CInitiatorState *s, hwaddr addr)
 
 static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
     int i;
-    uint64_t res;
+    uint64_t res, val;
     switch (addr) {
         default:
             return MEMTX_ERROR;
 
         GET_I2C_FIELD(inten0)
-        GET_I2C_FIELD(intfl0)
         GET_I2C_FIELD(status)
+
+        case I2C_OFFS(intfl0):
+            if(s->interrupt) {
+                // Prioritize interrupts
+                res = 0;
+                val = (s->regs.intfl0 & s->regs.inten0);
+
+                if(val & MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH) {
+                    res |= MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH;
+                } else if(val & (MXC_F_I2C_REVA_INTFL0_WR_ADDR_MATCH | MXC_F_I2C_REVA_INTFL0_TX_LOCKOUT)) {
+                    res |= (MXC_F_I2C_REVA_INTFL0_WR_ADDR_MATCH | MXC_F_I2C_REVA_INTFL0_TX_LOCKOUT);
+                } else if(val & MXC_F_I2C_REVA_INTFL0_RX_THD) {
+                    res |= MXC_F_I2C_REVA_INTFL0_RX_THD;
+                } else if(val & MXC_F_I2C_REVA_INTFL0_STOP) {
+                    res |= MXC_F_I2C_REVA_INTFL0_STOP;
+                }
+
+                return res;
+            } else {
+                return s->regs.intfl0;
+            }
 
         case I2C_OFFS(ctrl):
             res = s->regs.ctrl;
@@ -113,7 +131,6 @@ static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
             qemu_mutex_lock(&s->lock);
             if(s->ptr > 0) {
                 res = s->fifo[0];
-                // fprintf(stderr, "target: read byte %x\n", s->fifo[0]);
                 for(i = 0; i < s->ptr - 1; i++) {
                     s->fifo[i] = s->fifo[i + 1];
                 }
@@ -122,8 +139,6 @@ static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
                 if(s->ptr == 0) {
                     s->regs.status |= MXC_F_I2C_REVA_STATUS_RX_EM;
                 }
-            } else {
-                // fprintf(stderr, "target: empty fifo\n");
             }
             qemu_mutex_unlock(&s->lock);
             return res;
@@ -344,31 +359,7 @@ static void i2c_write_target(MXCI2CInitiatorState *s, hwaddr addr, uint64_t valu
                 }
             }
 
-//            if((s->regs.intfl0 & ~value) == 0 && s->stop_pending) {
-//                // Inject a stop after we've handled everything else
-//                s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
-//                // fprintf(stderr, "target: setting intfl0 MXC_F_I2C_REVA_INTFL0_STOP %x\n", s->regs.intfl0);
-//                s->stop_pending = false;
-//            }
-
-            if(value & MXC_F_I2C_REVA_INTFL0_STOP) {
-                // fprintf(stderr, "target: lowering intfl0 MXC_F_I2C_REVA_INTFL0_STOP %x\n", s->regs.intfl0);
-            }
-
-            if(value & MXC_F_I2C_REVA_INTFL0_RX_THD) {
-                // fprintf(stderr, "target: lowering intfl0 MXC_F_I2C_REVA_INTFL0_RX_THD %x\n", s->regs.intfl0);
-            }
-
-            if(value & MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH) {
-                // fprintf(stderr, "target: lowering MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH %x\n", s->regs.intfl0);
-            }
-
-            if(value & ~(MXC_F_I2C_REVA_INTFL0_RX_THD | MXC_F_I2C_REVA_INTFL0_STOP | MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH)) {
-                // fprintf(stderr, "target: lowering unknown\n");
-            }
-
             s->regs.intfl0 &= ~value;
-            // fprintf(stderr, "target: after lowering have intfl0 %x\n", s->regs.intfl0);
             mxc_i2c_target_refresh_interrupt(s);
             qemu_mutex_unlock(&s->lock);
             break;
@@ -377,9 +368,12 @@ static void i2c_write_target(MXCI2CInitiatorState *s, hwaddr addr, uint64_t valu
             qemu_mutex_lock(&s->lock);
             if(s->initiator->regs.rxctrl1 > 0) {
                 if(s->ptr < sizeof(s->fifo)) {
-                    // fprintf(stderr, "target: pushing %lx to fifo, len %x\n", value, s->ptr);
                     s->fifo[s->ptr] = value;
                     s->ptr++;
+
+                    if(s->ptr == sizeof(s->fifo)) {
+                        s->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
+                    }
 
                     // Notify controller
                     s->initiator->regs.rxctrl1--;
@@ -387,11 +381,8 @@ static void i2c_write_target(MXCI2CInitiatorState *s, hwaddr addr, uint64_t valu
                 } else {
                     // Flag that we are out of space
                     // todo unset this
-                    s->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
+                    exit(-1);
                 }
-            } else {
-                // Say that we are full
-                s->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
             }
 
             qemu_mutex_unlock(&s->lock);
@@ -441,11 +432,9 @@ static int mxc_i2c_target_send(I2CSlave *target, uint8_t data)
     qemu_mutex_lock(&controller->lock);
     if(controller->ptr < sizeof(controller->fifo)) {
         controller->fifo[controller->ptr] = data;
-         // fprintf(stderr, "target: write byte %x\n", data);
         controller->ptr++;
 
         controller->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
-        // fprintf(stderr, "target: setting intfl0 MXC_F_I2C_REVA_INTFL0_RX_THD %x\n", controller->regs.intfl0);
         controller->regs.status &= ~MXC_F_I2C_REVA_STATUS_RX_EM;
         mxc_i2c_target_refresh_interrupt(controller);
     }
@@ -464,7 +453,6 @@ static uint8_t mxc_i2c_target_recv(I2CSlave *target)
     qemu_mutex_lock(&controller->lock);
     if(controller->ptr > 0) {
         res = controller->fifo[0];
-        // fprintf(stderr, "target: read byte %x\n", controller->fifo[0]);
         for(i = 0; i < controller->ptr - 1; i++) {
             controller->fifo[i] = controller->fifo[i + 1];
         }
@@ -499,12 +487,10 @@ static int mxc_i2c_target_event(I2CSlave *target, enum i2c_event event)
         case I2C_START_SEND:
             controller->ptr = 0;
             controller->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH;
-            // fprintf(stderr, "target: setting intfl0 MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH %x\n", controller->regs.intfl0);
-//            mxc_i2c_target_refresh_interrupt(controller);
+            mxc_i2c_target_refresh_interrupt(controller);
             break;
         case I2C_FINISH:
             controller->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
-            // fprintf(stderr, "target: setting intfl0 MXC_F_I2C_REVA_INTFL0_STOP %x\n", controller->regs.intfl0);
             mxc_i2c_target_refresh_interrupt(controller);
             break;
 

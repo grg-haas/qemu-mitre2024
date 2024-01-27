@@ -38,11 +38,11 @@ struct MXCI2CInitiatorState {
 
     // state machine
     bool writing, reading;
-    bool start_pending;
+    bool start_pending, stop_pending;
     bool interrupt;
     MaximCM4I2CState state;
     uint8_t addr;
-    uint8_t fifo[8], ptr;
+    uint8_t fifo[64], ptr;
 
     // register state
     mxc_i2c_reva_regs_t regs;

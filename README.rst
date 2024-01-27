@@ -30,7 +30,7 @@ All options are mandatory, the simulator will likely not work without them.
 
   ./build/qemu-system-arm \
 	-machine max78000,ap=<path to ap.elf>,comp1=<path to comp1.elf>,comp2=<path to comp2.elf>\
-	-smp 3 -serial stdio -serial file:/tmp/comp1.out -serial file:/tmp/comp2.out \
+	-smp 3 -serial mon:stdio -serial file:/tmp/comp1.out -serial file:/tmp/comp2.out \
 	-S -gdb tcp::9822
 
 Any :code:`printf`'s from the AP get echoed to :code:`stdout`, where you run QEMU. The :code:`printf`'s
