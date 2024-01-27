@@ -38,6 +38,24 @@ from the components get sent to :code:`/tmp/comp1.out` and :code:`/tmp/comp2.out
 configured above. NOTE THAT THE ORDER OF THESE OPTIONS MATTERS. The first :code:`-serial` option always
 corresponds to the AP, and the next ones always correspond to components 1 and 2 respectively.
 
+eCTF Host Tools
++++++++++++++++
+
+You can use the provided eCTF host tools (i.e. :code:`list_tool.py`, :code:`boot_tool.py`, etc) to
+interact with the simulator. To do so, modify the command line above and replace :code:`-serial stdio`
+with :code:`-serial pty`. QEMU will print a line like
+
+.. code-block:: shell
+
+  char device redirected to /dev/pts/1 (label serial0)
+
+You can then run the host tools against the simulator by specifying this pty file as the :code:`-a`
+parameter, like this (after starting the simulator like above):
+
+.. code-block:: shell
+
+  python ./ectf_tools/list_tool.py -a /dev/pts/1
+
 Debugging
 =========
 
