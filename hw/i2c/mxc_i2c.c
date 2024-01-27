@@ -39,6 +39,9 @@ static void mxc_i2c_target_refresh_interrupt(MXCI2CInitiatorState *controller) {
     }
 }
 
+
+/* Read functions */
+
 static uint64_t i2c_read_initiator(MXCI2CInitiatorState *s, hwaddr addr)
 {
     uint64_t res;
@@ -92,6 +95,7 @@ static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
 
         GET_I2C_FIELD(inten0)
         GET_I2C_FIELD(status)
+        GET_I2C_FIELD(slave)
 
         case I2C_OFFS(intfl0):
             if(s->interrupt) {
@@ -162,7 +166,6 @@ static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
         NOP_I2C_FIELD(hsclk)
         NOP_I2C_FIELD(timeout)
         NOP_I2C_FIELD(dma)
-        NOP_I2C_FIELD(slave)
             return 0;
     }}
 
@@ -176,6 +179,8 @@ static uint64_t mxc_i2c_read(void *opaque, hwaddr addr, unsigned size)
         return i2c_read_target(s, addr);
     }
 }
+
+/* Write functions */
 
 static void i2c_write_initiator(MXCI2CInitiatorState *s, hwaddr addr, uint64_t value)
 {
@@ -200,10 +205,12 @@ static void i2c_write_initiator(MXCI2CInitiatorState *s, hwaddr addr, uint64_t v
                         if(s->ptr < sizeof(s->fifo)) {
                             s->fifo[s->ptr] = value;
                             s->ptr++;
-                        } else {
-                            // Flag that we are out of space
-                            s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
-                            mxc_i2c_target_refresh_interrupt(s);
+
+                            if(s->ptr == sizeof(s->fifo)) {
+                                // Flag that we are out of space
+                                s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
+                                mxc_i2c_target_refresh_interrupt(s);
+                            }
                         }
                     }
 
@@ -331,15 +338,13 @@ static void i2c_write_target(MXCI2CInitiatorState *s, hwaddr addr, uint64_t valu
             break;
 
         SET_I2C_FIELD(ctrl)
-        SET_I2C_FIELD(slave)
+
+        case I2C_OFFS(slave):
+            i2c_slave_set_address(I2C_SLAVE(s->target), value);
+            break;
 
         case I2C_OFFS(inten0):
             s->regs.inten0 = value;
-
-            if(!(value & MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH)) {
-                printf("bruh\n");
-            }
-
             mxc_i2c_target_refresh_interrupt(s);
             break;
 
@@ -367,22 +372,19 @@ static void i2c_write_target(MXCI2CInitiatorState *s, hwaddr addr, uint64_t valu
         case I2C_OFFS(fifo):
             qemu_mutex_lock(&s->lock);
             if(s->initiator->regs.rxctrl1 > 0) {
-                if(s->ptr < sizeof(s->fifo)) {
-                    s->fifo[s->ptr] = value;
-                    s->ptr++;
+                // We shouldn't have gotten here if there is not a byte to push
+                assert(s->ptr < sizeof(s->fifo));
 
-                    if(s->ptr == sizeof(s->fifo)) {
-                        s->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
-                    }
+                s->fifo[s->ptr] = value;
+                s->ptr++;
 
-                    // Notify controller
-                    s->initiator->regs.rxctrl1--;
-                    s->initiator->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
-                } else {
-                    // Flag that we are out of space
-                    // todo unset this
-                    exit(-1);
+                if(s->ptr == sizeof(s->fifo)) {
+                    s->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
                 }
+
+                // Notify controller
+                s->initiator->regs.rxctrl1--;
+                s->initiator->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
             }
 
             qemu_mutex_unlock(&s->lock);
@@ -463,7 +465,6 @@ static uint8_t mxc_i2c_target_recv(I2CSlave *target)
             controller->initiator->regs.status |= MXC_F_I2C_REVA_STATUS_RX_EM;
         }
 
-        // todo unset this
         controller->regs.status &= ~MXC_F_I2C_REVA_STATUS_TX_FULL;
     }
 
@@ -474,6 +475,7 @@ static uint8_t mxc_i2c_target_recv(I2CSlave *target)
 
 static int mxc_i2c_target_event(I2CSlave *target, enum i2c_event event)
 {
+    int ret = 0;
     MXCI2CTargetState *mts = MXC_I2C_TARGET(target);
     MXCI2CInitiatorState *controller = mts->target;
 
@@ -496,11 +498,11 @@ static int mxc_i2c_target_event(I2CSlave *target, enum i2c_event event)
 
         case I2C_START_SEND_ASYNC:
         case I2C_NACK:
-            return 1;
+            ret = 1;
     }
     qemu_mutex_unlock(&controller->lock);
 
-    return 0;
+    return ret;
 }
 
 static void mxc_i2c_target_realize(DeviceState *dev, Error **errp)

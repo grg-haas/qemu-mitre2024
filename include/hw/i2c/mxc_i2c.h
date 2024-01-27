@@ -26,15 +26,16 @@ struct MXCI2CInitiatorState {
 
     /*< public >*/
     MXCI2CInitiatorState *initiator;
+    MXCI2CTargetState *target;
+
     QemuMutex lock;
 
     // memory/system info
     uint64_t base;
-    MemoryRegion *mmiomem;
+    MemoryRegion *mmiomem, iomem;
     qemu_irq irq;
     I2CBus *bus;
 
-    MemoryRegion iomem;
 
     // state machine
     bool writing, reading;

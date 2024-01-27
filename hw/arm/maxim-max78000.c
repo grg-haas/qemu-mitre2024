@@ -10,8 +10,9 @@
 #include "sysemu/reset.h"
 #include "hw/i2c/i2c.h"
 
-/* Board definition */
-#define SYSCLK_FRQ 24000000ULL
+/* Entrypoint handling */
+
+// See comment in maxim_max78000_load_firmware
 
 struct entrypoint {
     CPUState *cpu;
@@ -23,6 +24,8 @@ static void maxim_max78000_set_entrypoint(void *opaque) {
     cpu_set_pc(entrypoint->cpu, entrypoint->addr);
     g_free(entrypoint);
 }
+
+/* Board definition */
 
 static MaximCM4State *maxim_max78000_init_cpu(Clock *sysclk, int id) {
     DeviceState *dev = qdev_new(TYPE_MAXIM_CM4);
@@ -44,11 +47,14 @@ static void maxim_max78000_load_firmware(ARMCPU *cpu, const char *firmware) {
         return;
     }
 
+    // Get the header first, so we can set the entrypoint later
     load_elf_hdr(firmware, &ehdr, &is_elf64, &error_abort);
+
+    // Load the firmware
     armv7m_load_kernel(cpu, firmware, 0, 0);
 
     // armv7m_load_kernel registers a reset of the CPU, which is necessary
-    // in order for the system to come up directly. Unfortunately, this would
+    // in order for the system to come up correctly. Unfortunately, this would
     // also trash the entrypoint if we were to set it here with cpu_set_pc.
     // Therefore, we need to register our own reset function to run after
     // theirs, so that the CPUs start up at the correct address.
@@ -64,14 +70,14 @@ static char ap_firmware[FW_STRLEN] = {0},
                 comp1_firmware[FW_STRLEN] = {0},
                 comp2_firmware[FW_STRLEN] = {0};
 
+#define SYSCLK_FRQ 24000000ULL
+
 static void maxim_max78000_init(MachineState *machine) {
     int i;
     const char *firmware = NULL;
     CPUState *cpu;
     MaximCM4State *dev, *ap;
     I2CSlave *target;
-
-    uint32_t component_ids[COMPONENT_CNT] = {COMPONENT_IDS};
 
     /* Initialize processors */
     Clock *sysclk = clock_new(OBJECT(machine), "SYSCLK");
@@ -84,12 +90,13 @@ static void maxim_max78000_init(MachineState *machine) {
         if(i == 0) {
             ap = dev;
         } else {
-            target = i2c_slave_new(TYPE_MXC_I2C_TARGET, component_ids[i - 1] & 0xFF);
+            target = i2c_slave_new(TYPE_MXC_I2C_TARGET, -1);
             object_property_set_link(OBJECT(target), "target", OBJECT(dev->i2c1), &error_abort);
             qdev_realize_and_unref(DEVICE(target), BUS(ap->i2c1->bus), &error_abort);
 
             // Hacky...
             dev->i2c1->initiator = ap->i2c1;
+            dev->i2c1->target = MXC_I2C_TARGET(target);
         }
     }
 
@@ -165,6 +172,7 @@ static void maxim_max78000_machine_init(MachineClass *mc) {
     mc->max_cpus = 3;
     mc->min_cpus = 3;
 
+    // Allow for specifying the separate board firmwares on the command line
     object_class_property_add_str(oc, "ap", get_ap_firmware, set_ap_firmware);
     object_class_property_add_str(oc, "comp1", get_comp1_firmware, set_comp1_firmware);
     object_class_property_add_str(oc, "comp2", get_comp2_firmware, set_comp2_firmware);

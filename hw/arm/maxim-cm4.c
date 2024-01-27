@@ -218,10 +218,16 @@ static void maxim_cm4_realize_mem(MaximCM4State *mstate) {
     char buf[128];
     MemoryRegion *sysmem;
 
+    // We create a main memory region, which all regions for this CPU will be subregions
+    // of. We avoid using get_system_memory since this returns a *global* handle to the
+    // top memory region, and each of our CPUs in this simulator actually have their own
+    // separate views of memory. To implement this model, this approach is necessary.
+
     snprintf(buf, sizeof(buf), "main%i", mstate->id);
     memory_region_init(&mstate->main, OBJECT(mstate), buf, UINT32_MAX);
     sysmem = &mstate->main;
 
+    // Todo: I think ROM and flash may actually be ro/rw views into the same underlying memory
     snprintf(buf, sizeof(buf), "rom%i", mstate->id);
     memory_region_init_rom(&mstate->rom, OBJECT(mstate), buf, 512 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x00000000, &mstate->rom);
@@ -230,10 +236,12 @@ static void maxim_cm4_realize_mem(MaximCM4State *mstate) {
     memory_region_init_rom(&mstate->flash, OBJECT(mstate), buf, 512 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x10000000, &mstate->flash);
 
+    // Todo: sysram1-4 to implement RISCV-isolated memory
     snprintf(buf, sizeof(buf), "sram%i", mstate->id);
     memory_region_init_ram(&mstate->sram, OBJECT(mstate), buf, 128 * KiB, &error_abort);
     memory_region_add_subregion(sysmem, 0x20000000, &mstate->sram);
 
+    // Low-priority MMIO region to hang peripherals off of
     snprintf(buf, sizeof(buf), "mmio%i", mstate->id);
     memory_region_init(&mstate->mmio, OBJECT(mstate), buf, UINT32_MAX);
     memory_region_add_subregion_overlap(sysmem, 0x0, &mstate->mmio, -1000);
@@ -261,7 +269,7 @@ static void maxim_cm4_realize_peripherals(MaximCM4State *mstate, MemoryRegion *s
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_abort);
     mstate->i2c1 = MXC_I2C_INITIATOR(dev);
 
-    // UART, either real or mocked depending on what's needed
+    // UART, either real or mocked depending on what's requested
     mstate->chr = serial_hd(mstate->id);
     if(mstate->chr) {
         mstate->uart_pending = false;
