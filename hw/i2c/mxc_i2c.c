@@ -16,56 +16,66 @@
 #define NOP_I2C_FIELD(name) \
     case I2C_OFFS(name):
 
-#define SET_I2C_FIELD(name) \
+#define SET_I2C_FIELD(ctrl, name) \
     case I2C_OFFS(name): \
-        s->regs.name = value; break;
+        (ctrl)->regs.name = value; break;
 
-#define GET_I2C_FIELD(name) \
+#define GET_I2C_FIELD(ctrl, name) \
     case I2C_OFFS(name): \
-        return s->regs.name; break;
+        return (ctrl)->regs.name; break;
 
-static void mxc_i2c_target_refresh_interrupt(MXCI2CInitiatorState *controller) {
+static MXCI2CTargetState *mxc_i2c_target_get_target(MXCI2CInitiatorState *tctrl) {
+    int i = 0;
+    I2CNode *node;
+
+    // Target controllers should only have one target in their lists
+    QLIST_FOREACH(node, &tctrl->targets, next) { i++; }
+    assert(i == 1);
+    assert(node);
+    return MXC_I2C_TARGET(node->elt);
+}
+
+static void mxc_i2c_target_refresh_interrupt(MXCI2CInitiatorState *ctrl, MXCI2CTargetState *target) {
     // Interrupt should be high if there is a pending flag for an enabled line
-    if(controller->regs.intfl0 & controller->regs.inten0) {
-        if(!controller->interrupt) {
-            controller->interrupt = true;
+    if(ctrl->regs.intfl0 & ctrl->regs.inten0) {
+        if(!target->interrupt) {
+            target->interrupt = true;
         }
-        qemu_irq_raise(controller->irq);
+        qemu_irq_raise(ctrl->irq);
     } else {
-        if(controller->interrupt) {
-            controller->interrupt = false;
+        if(target->interrupt) {
+            target->interrupt = false;
         }
-        qemu_irq_lower(controller->irq);
+        qemu_irq_lower(ctrl->irq);
     }
 }
 
-
 /* Read functions */
 
-static uint64_t i2c_read_initiator(MXCI2CInitiatorState *s, hwaddr addr)
+static uint64_t i2c_read_initiator(MXCI2CInitiatorState *tctrl, hwaddr addr)
 {
     uint64_t res;
     switch (addr) {
         default:
             return MEMTX_ERROR;
 
-        GET_I2C_FIELD(intfl0)
-        GET_I2C_FIELD(mstctrl)
+        GET_I2C_FIELD(tctrl, intfl0)
+        GET_I2C_FIELD(tctrl, mstctrl)
 
         case I2C_OFFS(ctrl):
-            res = s->regs.ctrl;
-            if(s->regs.ctrl & MXC_F_I2C_REVA_CTRL_SDA_OUT) {
+            res = tctrl->regs.ctrl;
+            if(tctrl->regs.ctrl & MXC_F_I2C_REVA_CTRL_SDA_OUT) {
                 res |= MXC_F_I2C_REVA_CTRL_SDA;
             }
 
-            if(s->regs.ctrl & MXC_F_I2C_REVA_CTRL_SCL_OUT) {
+            if(tctrl->regs.ctrl & MXC_F_I2C_REVA_CTRL_SCL_OUT) {
                 res |= MXC_F_I2C_REVA_CTRL_SCL;
             }
 
             return res;
 
         case I2C_OFFS(fifo):
-           return i2c_recv(s->bus);
+           return i2c_recv(tctrl->bus);
 
         NOP_I2C_FIELD(status)
         NOP_I2C_FIELD(inten0)
@@ -86,22 +96,24 @@ static uint64_t i2c_read_initiator(MXCI2CInitiatorState *s, hwaddr addr)
     }
 }
 
-static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
+static uint64_t i2c_read_target(MXCI2CInitiatorState *tctrl, hwaddr addr) {
     int i;
     uint64_t res, val;
+    MXCI2CTargetState *target = mxc_i2c_target_get_target(tctrl);
+
     switch (addr) {
         default:
-            return MEMTX_ERROR;
+            return 0;
 
-        GET_I2C_FIELD(inten0)
-        GET_I2C_FIELD(status)
-        GET_I2C_FIELD(slave)
+        GET_I2C_FIELD(tctrl, inten0)
+        GET_I2C_FIELD(tctrl, status)
+        GET_I2C_FIELD(tctrl, slave)
 
         case I2C_OFFS(intfl0):
-            if(s->interrupt) {
+            if(target->interrupt) {
                 // Prioritize interrupts
                 res = 0;
-                val = (s->regs.intfl0 & s->regs.inten0);
+                val = (tctrl->regs.intfl0 & tctrl->regs.inten0);
 
                 if(val & MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH) {
                     res |= MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH;
@@ -115,16 +127,16 @@ static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
 
                 return res;
             } else {
-                return s->regs.intfl0;
+                return tctrl->regs.intfl0;
             }
 
         case I2C_OFFS(ctrl):
-            res = s->regs.ctrl;
-            if(s->regs.ctrl & MXC_F_I2C_REVA_CTRL_SDA_OUT) {
+            res = tctrl->regs.ctrl;
+            if(tctrl->regs.ctrl & MXC_F_I2C_REVA_CTRL_SDA_OUT) {
                 res |= MXC_F_I2C_REVA_CTRL_SDA;
             }
 
-            if(s->regs.ctrl & MXC_F_I2C_REVA_CTRL_SCL_OUT) {
+            if(tctrl->regs.ctrl & MXC_F_I2C_REVA_CTRL_SCL_OUT) {
                 res |= MXC_F_I2C_REVA_CTRL_SCL;
             }
 
@@ -132,26 +144,26 @@ static uint64_t i2c_read_target(MXCI2CInitiatorState *s, hwaddr addr) {
 
         case I2C_OFFS(fifo):
             res = 0;
-            qemu_mutex_lock(&s->lock);
-            if(s->ptr > 0) {
-                res = s->fifo[0];
-                for(i = 0; i < s->ptr - 1; i++) {
-                    s->fifo[i] = s->fifo[i + 1];
+            qemu_mutex_lock(&target->lock);
+            if(target->ptr > 0) {
+                res = target->fifo[0];
+                for(i = 0; i < target->ptr - 1; i++) {
+                    target->fifo[i] = target->fifo[i + 1];
                 }
 
-                s->ptr--;
-                if(s->ptr == 0) {
-                    s->regs.status |= MXC_F_I2C_REVA_STATUS_RX_EM;
+                target->ptr--;
+                if(target->ptr == 0) {
+                    tctrl->regs.status |= MXC_F_I2C_REVA_STATUS_RX_EM;
                 }
             }
-            qemu_mutex_unlock(&s->lock);
+            qemu_mutex_unlock(&target->lock);
             return res;
 
         case I2C_OFFS(rxctrl1):
             res = 0;
-            qemu_mutex_lock(&s->lock);
-            res = s->ptr;
-            qemu_mutex_unlock(&s->lock);
+            qemu_mutex_lock(&target->lock);
+            res = target->ptr;
+            qemu_mutex_unlock(&target->lock);
             return res << MXC_F_I2C_REVA_RXCTRL1_LVL_POS;
 
         NOP_I2C_FIELD(intfl1)
@@ -182,34 +194,35 @@ static uint64_t mxc_i2c_read(void *opaque, hwaddr addr, unsigned size)
 
 /* Write functions */
 
-static void i2c_write_initiator(MXCI2CInitiatorState *s, hwaddr addr, uint64_t value)
+static void i2c_write_initiator(MXCI2CInitiatorState *ictrl, hwaddr addr, uint64_t value)
 {
     int i;
     uint64_t diff;
+    MXCI2CTargetState *target = mxc_i2c_target_get_target(ictrl);
 
     switch(addr) {
         default:
             break;
 
-        SET_I2C_FIELD(ctrl)
-        SET_I2C_FIELD(rxctrl1)
+        SET_I2C_FIELD(ictrl, ctrl)
+        SET_I2C_FIELD(ictrl, rxctrl1)
 
         case I2C_OFFS(fifo):
-            switch(s->state) {
+            switch(target->state) {
                 case CM4_I2C_DATA:
-                    if(s->writing) {
+                    if(target->writing) {
                         // Send now
-                        i2c_send(s->bus, value);
+                        i2c_send(ictrl->bus, value);
                     } else {
                         // Stash
-                        if(s->ptr < sizeof(s->fifo)) {
-                            s->fifo[s->ptr] = value;
-                            s->ptr++;
+                        if(target->ptr < sizeof(target->fifo)) {
+                            target->fifo[target->ptr] = value;
+                            target->ptr++;
 
-                            if(s->ptr == sizeof(s->fifo)) {
+                            if(target->ptr == sizeof(target->fifo)) {
                                 // Flag that we are out of space
-                                s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
-                                mxc_i2c_target_refresh_interrupt(s);
+                                ictrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
+                                mxc_i2c_target_refresh_interrupt(ictrl, target);
                             }
                         }
                     }
@@ -218,23 +231,23 @@ static void i2c_write_initiator(MXCI2CInitiatorState *s, hwaddr addr, uint64_t v
 
                 case CM4_I2C_ADDR:
                     // Stash the address
-                    s->addr = value >> 1;
+                    target->addr = value >> 1;
                     if(value & 1) {
-                        s->reading = true;
+                        target->reading = true;
 
                         // Start the transfer
-                        if(i2c_start_recv(s->bus, s->addr)) {
+                        if(i2c_start_recv(ictrl->bus, target->addr)) {
                             // Invalid address
-                            s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_ADDR_NACK_ERR;
-                            s->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_START;
-                            mxc_i2c_target_refresh_interrupt(s);
+                            ictrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_ADDR_NACK_ERR;
+                            ictrl->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_START;
+                            mxc_i2c_target_refresh_interrupt(ictrl, target);
                         }
                     } else {
-                        s->writing = true;
+                        target->writing = true;
                     }
 
-                    s->ptr = 0;
-                    s->state = CM4_I2C_DATA;
+                    target->ptr = 0;
+                    target->state = CM4_I2C_DATA;
                     break;
 
                 default:
@@ -243,74 +256,72 @@ static void i2c_write_initiator(MXCI2CInitiatorState *s, hwaddr addr, uint64_t v
             break;
 
         case I2C_OFFS(mstctrl):
-            diff = (value & ~s->regs.mstctrl);
+            diff = (value & ~ictrl->regs.mstctrl);
             assert(__builtin_popcount(diff) == 1);
-            s->regs.mstctrl = value;
+            ictrl->regs.mstctrl = value;
             if(diff & MXC_F_I2C_REVA_MSTCTRL_START) {
-                if(s->writing) {
+                if(target->writing) {
                     // Start the transfer
-                    if(i2c_start_send(s->bus, s->addr)) {
+                    if(i2c_start_send(ictrl->bus, target->addr)) {
                         // Invalid address
-                        s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_ADDR_NACK_ERR;
-                        s->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_START;
-                        mxc_i2c_target_refresh_interrupt(s);
+                        ictrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_ADDR_NACK_ERR;
+                        ictrl->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_START;
+                        mxc_i2c_target_refresh_interrupt(ictrl, target);
                     } else {
-                        for(i = 0; i < s->ptr; i++) {
-                            i2c_send(s->bus, s->fifo[i]);
+                        for(i = 0; i < target->ptr; i++) {
+                            i2c_send(ictrl->bus, target->fifo[i]);
                         }
 
-                        s->ptr = 0;
+                        target->ptr = 0;
                     }
-                } else if(s->reading) {
-
                 }
             }
             else if(diff & MXC_F_I2C_REVA_MSTCTRL_RESTART) {
-                s->start_pending = true;
-                if(s->writing) {
-                    s->writing = false;
-                    s->state = CM4_I2C_ADDR;
-                    s->addr = 0;
-                    s->ptr = 0;
+                target->start_pending = true;
+                if(target->writing) {
+                    target->writing = false;
+                    target->state = CM4_I2C_ADDR;
+                    target->addr = 0;
+                    target->ptr = 0;
 
-                    i2c_end_transfer(s->bus);
+                    i2c_end_transfer(ictrl->bus);
 
                     // Target sets MXC_F_I2C_REVA_INTFL0_DONE when stop condition acknowledged
-                    s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
-                    s->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_STOP;
-                    mxc_i2c_target_refresh_interrupt(s);
+                    ictrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
+                    ictrl->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_STOP;
+                    mxc_i2c_target_refresh_interrupt(ictrl, target);
                 }
             }
             else if(diff & MXC_F_I2C_REVA_MSTCTRL_STOP) {
-                if(s->writing) {
-                    s->writing = false;
+                if(target->writing) {
+                    target->writing = false;
                 }
 
-                if(s->reading) {
-                    s->reading = false;
+                if(target->reading) {
+                    target->reading = false;
                 }
 
-                s->state = CM4_I2C_ADDR;
-                s->addr = 0;
-                s->ptr = 0;
+                target->state = CM4_I2C_ADDR;
+                target->addr = 0;
+                target->ptr = 0;
 
-                i2c_end_transfer(s->bus);
+                i2c_end_transfer(ictrl->bus);
 
                 // Target sets MXC_F_I2C_REVA_INTFL0_DONE when stop condition acknowledged
-                s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
-                s->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_STOP;
-                mxc_i2c_target_refresh_interrupt(s);
+                ictrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
+                ictrl->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_STOP;
+                mxc_i2c_target_refresh_interrupt(ictrl, target);
             }
 
             break;
 
         case I2C_OFFS(intfl0):
-            s->regs.intfl0 &= ~value;
-            if(!s->writing && s->ptr < sizeof(s->fifo)) {
-                s->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
+            ictrl->regs.intfl0 &= ~value;
+            if(!target->writing && target->ptr < sizeof(target->fifo)) {
+                ictrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_TX_THD;
             }
 
-            mxc_i2c_target_refresh_interrupt(s);
+            mxc_i2c_target_refresh_interrupt(ictrl, target);
             break;
 
         NOP_I2C_FIELD(status)
@@ -331,63 +342,64 @@ static void i2c_write_initiator(MXCI2CInitiatorState *s, hwaddr addr, uint64_t v
     }
 }
 
-static void i2c_write_target(MXCI2CInitiatorState *s, hwaddr addr, uint64_t value)
+static void i2c_write_target(MXCI2CInitiatorState *tctrl, hwaddr addr, uint64_t value)
 {
+    MXCI2CTargetState *target = mxc_i2c_target_get_target(tctrl);
     switch(addr) {
         default:
             break;
 
-        SET_I2C_FIELD(ctrl)
+        SET_I2C_FIELD(tctrl, ctrl)
 
         case I2C_OFFS(slave):
-            i2c_slave_set_address(I2C_SLAVE(s->target), value);
+            i2c_slave_set_address(I2C_SLAVE(target), value);
             break;
 
         case I2C_OFFS(inten0):
-            s->regs.inten0 = value;
-            mxc_i2c_target_refresh_interrupt(s);
+            tctrl->regs.inten0 = value;
+            mxc_i2c_target_refresh_interrupt(tctrl, target);
             break;
 
         case I2C_OFFS(intfl0):
-            qemu_mutex_lock(&s->lock);
+            qemu_mutex_lock(&target->lock);
             if(value & MXC_F_I2C_REVA_INTFL0_STOP) {
                 // Signal to the initiator that the transfer is complete
-                if(s->initiator) {
-                    s->initiator->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_START;
+                if(target->initiator) {
+                    target->initiator->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_START;
 
-                    if(s->initiator->start_pending) {
-                        s->initiator->start_pending = false;
-                        s->initiator->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_RESTART;
+                    if(target->start_pending) {
+                        target->start_pending = false;
+                        target->initiator->regs.mstctrl &= ~MXC_F_I2C_REVA_MSTCTRL_RESTART;
                     } else {
-                        s->initiator->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_DONE;
+                        target->initiator->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_DONE;
                     }
                 }
             }
 
-            s->regs.intfl0 &= ~value;
-            mxc_i2c_target_refresh_interrupt(s);
-            qemu_mutex_unlock(&s->lock);
+            tctrl->regs.intfl0 &= ~value;
+            mxc_i2c_target_refresh_interrupt(tctrl, target);
+            qemu_mutex_unlock(&target->lock);
             break;
 
         case I2C_OFFS(fifo):
-            qemu_mutex_lock(&s->lock);
-            if(s->initiator->regs.rxctrl1 > 0) {
+            qemu_mutex_lock(&target->lock);
+            if(target->initiator->regs.rxctrl1 > 0) {
                 // We shouldn't have gotten here if there is not a byte to push
-                assert(s->ptr < sizeof(s->fifo));
+                assert(target->ptr < sizeof(target->fifo));
 
-                s->fifo[s->ptr] = value;
-                s->ptr++;
+                target->fifo[target->ptr] = value;
+                target->ptr++;
 
-                if(s->ptr == sizeof(s->fifo)) {
-                    s->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
+                if(target->ptr == sizeof(target->fifo)) {
+                    tctrl->regs.status |= MXC_F_I2C_REVA_STATUS_TX_FULL;
                 }
 
                 // Notify controller
-                s->initiator->regs.rxctrl1--;
-                s->initiator->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
+                target->initiator->regs.rxctrl1--;
+                target->initiator->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
             }
 
-            qemu_mutex_unlock(&s->lock);
+            qemu_mutex_unlock(&target->lock);
             break;
 
         NOP_I2C_FIELD(status)
@@ -429,18 +441,18 @@ static const MemoryRegionOps mxc_i2c_ops = {
 static int mxc_i2c_target_send(I2CSlave *target, uint8_t data)
 {
     MXCI2CTargetState *mts = MXC_I2C_TARGET(target);
-    MXCI2CInitiatorState *controller = mts->target;
+    MXCI2CInitiatorState *tctrl = mts->target;
 
-    qemu_mutex_lock(&controller->lock);
-    if(controller->ptr < sizeof(controller->fifo)) {
-        controller->fifo[controller->ptr] = data;
-        controller->ptr++;
+    qemu_mutex_lock(&mts->lock);
+    if(mts->ptr < sizeof(mts->fifo)) {
+        mts->fifo[mts->ptr] = data;
+        mts->ptr++;
 
-        controller->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
-        controller->regs.status &= ~MXC_F_I2C_REVA_STATUS_RX_EM;
-        mxc_i2c_target_refresh_interrupt(controller);
+        tctrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RX_THD;
+        tctrl->regs.status &= ~MXC_F_I2C_REVA_STATUS_RX_EM;
+        mxc_i2c_target_refresh_interrupt(tctrl, MXC_I2C_TARGET(target));
     }
-    qemu_mutex_unlock(&controller->lock);
+    qemu_mutex_unlock(&mts->lock);
 
     return 0;
 }
@@ -450,25 +462,26 @@ static uint8_t mxc_i2c_target_recv(I2CSlave *target)
     int i;
     uint8_t res = 0;
     MXCI2CTargetState *mts = MXC_I2C_TARGET(target);
-    MXCI2CInitiatorState *controller = mts->target;
+    MXCI2CInitiatorState *tctrl = mts->target;
+    MXCI2CInitiatorState *ictrl = mts->initiator;
 
-    qemu_mutex_lock(&controller->lock);
-    if(controller->ptr > 0) {
-        res = controller->fifo[0];
-        for(i = 0; i < controller->ptr - 1; i++) {
-            controller->fifo[i] = controller->fifo[i + 1];
+    qemu_mutex_lock(&mts->lock);
+    if(mts->ptr > 0) {
+        res = mts->fifo[0];
+        for(i = 0; i < mts->ptr - 1; i++) {
+            mts->fifo[i] = mts->fifo[i + 1];
         }
 
-        controller->ptr--;
-        if(controller->ptr == 0) {
-            controller->regs.status |= MXC_F_I2C_REVA_STATUS_TX_EM;
-            controller->initiator->regs.status |= MXC_F_I2C_REVA_STATUS_RX_EM;
+        mts->ptr--;
+        if(mts->ptr == 0) {
+            tctrl->regs.status |= MXC_F_I2C_REVA_STATUS_TX_EM;
+            ictrl->regs.status |= MXC_F_I2C_REVA_STATUS_RX_EM;
         }
 
-        controller->regs.status &= ~MXC_F_I2C_REVA_STATUS_TX_FULL;
+        tctrl->regs.status &= ~MXC_F_I2C_REVA_STATUS_TX_FULL;
     }
 
-    qemu_mutex_unlock(&controller->lock);
+    qemu_mutex_unlock(&mts->lock);
 
     return res;
 }
@@ -477,41 +490,45 @@ static int mxc_i2c_target_event(I2CSlave *target, enum i2c_event event)
 {
     int ret = 0;
     MXCI2CTargetState *mts = MXC_I2C_TARGET(target);
-    MXCI2CInitiatorState *controller = mts->target;
+    MXCI2CInitiatorState *tctrl = mts->target;
 
-    qemu_mutex_lock(&controller->lock);
+    qemu_mutex_lock(&mts->lock);
     switch(event) {
         case I2C_START_RECV:
-            controller->ptr = 0;
-            controller->regs.intfl0 |= (MXC_F_I2C_REVA_INTFL0_WR_ADDR_MATCH | MXC_F_I2C_REVA_INTFL0_TX_LOCKOUT);
-            mxc_i2c_target_refresh_interrupt(controller);
+            mts->ptr = 0;
+            tctrl->regs.intfl0 |= (MXC_F_I2C_REVA_INTFL0_WR_ADDR_MATCH | MXC_F_I2C_REVA_INTFL0_TX_LOCKOUT);
+            mxc_i2c_target_refresh_interrupt(tctrl, MXC_I2C_TARGET(target));
             break;
         case I2C_START_SEND:
-            controller->ptr = 0;
-            controller->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH;
-            mxc_i2c_target_refresh_interrupt(controller);
+            mts->ptr = 0;
+            tctrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_RD_ADDR_MATCH;
+            mxc_i2c_target_refresh_interrupt(tctrl, MXC_I2C_TARGET(target));
             break;
         case I2C_FINISH:
-            controller->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
-            mxc_i2c_target_refresh_interrupt(controller);
+            tctrl->regs.intfl0 |= MXC_F_I2C_REVA_INTFL0_STOP;
+            mxc_i2c_target_refresh_interrupt(tctrl, MXC_I2C_TARGET(target));
             break;
 
         case I2C_START_SEND_ASYNC:
         case I2C_NACK:
             ret = 1;
     }
-    qemu_mutex_unlock(&controller->lock);
+    qemu_mutex_unlock(&mts->lock);
 
     return ret;
 }
 
 static void mxc_i2c_target_realize(DeviceState *dev, Error **errp)
 {
+    MXCI2CTargetState *mts = MXC_I2C_TARGET(dev);
 
+    qemu_mutex_init(&mts->lock);
+    mts->interrupt = false;
 }
 
 static Property mxc_i2c_target_properties[] = {
         DEFINE_PROP_LINK("target", MXCI2CTargetState, target, TYPE_MXC_I2C_INITIATOR, MXCI2CInitiatorState *),
+        DEFINE_PROP_LINK("initiator", MXCI2CTargetState, initiator, TYPE_MXC_I2C_INITIATOR, MXCI2CInitiatorState *),
         DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -553,12 +570,10 @@ static void mxc_i2c_initiator_realize(DeviceState *dev, Error **errp)
     if(s->base && s->mmiomem) {
         memory_region_add_subregion(s->mmiomem, s->base, &s->iomem);
     }
-
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iomem);
-    s->bus = i2c_init_bus(dev, "i2c");
-    qemu_mutex_init(&s->lock);
 
-    s->interrupt = false;
+    s->bus = i2c_init_bus(dev, "i2c");
+    QLIST_INIT(&s->targets);
 }
 
 static Property mxc_i2c_initiator_properties[] = {

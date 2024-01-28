@@ -8,6 +8,7 @@
 #define __PROGRAM_START
 #define __CMSIS_GENERIC
 #include "i2c_reva_regs.h"
+#include "i2c.h"
 
 #define TYPE_MXC_I2C_INITIATOR  "mxc-i2c-initiator"
 #define TYPE_MXC_I2C_TARGET     "mxc-i2c-target"
@@ -25,10 +26,6 @@ struct MXCI2CInitiatorState {
     SysBusDevice parent_obj;
 
     /*< public >*/
-    MXCI2CInitiatorState *initiator;
-    MXCI2CTargetState *target;
-
-    QemuMutex lock;
 
     // memory/system info
     uint64_t base;
@@ -36,17 +33,11 @@ struct MXCI2CInitiatorState {
     qemu_irq irq;
     I2CBus *bus;
 
-
-    // state machine
-    bool writing, reading;
-    bool start_pending, stop_pending;
-    bool interrupt;
-    MaximCM4I2CState state;
-    uint8_t addr;
-    uint8_t fifo[64], ptr;
-
     // register state
     mxc_i2c_reva_regs_t regs;
+
+    // targets
+    I2CNodeList targets;
 };
 
 struct MXCI2CTargetState {
@@ -55,6 +46,16 @@ struct MXCI2CTargetState {
 
     /*< public >*/
     MXCI2CInitiatorState *target;
+    MXCI2CInitiatorState *initiator;
+
+    // state machine
+    QemuMutex lock;
+    bool writing, reading;
+    bool start_pending, stop_pending;
+    bool interrupt;
+    MaximCM4I2CState state;
+    uint8_t addr;
+    uint8_t fifo[64], ptr;
 };
 
 #endif //MXC_I2C_H

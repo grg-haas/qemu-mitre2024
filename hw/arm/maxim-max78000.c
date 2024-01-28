@@ -77,6 +77,8 @@ static void maxim_max78000_init(MachineState *machine) {
     const char *firmware = NULL;
     CPUState *cpu;
     MaximCM4State *dev, *ap;
+
+    I2CNode *node;
     I2CSlave *target;
 
     /* Initialize processors */
@@ -92,11 +94,12 @@ static void maxim_max78000_init(MachineState *machine) {
         } else {
             target = i2c_slave_new(TYPE_MXC_I2C_TARGET, -1);
             object_property_set_link(OBJECT(target), "target", OBJECT(dev->i2c1), &error_abort);
+            object_property_set_link(OBJECT(target), "initiator", OBJECT(ap->i2c1), &error_abort);
             qdev_realize_and_unref(DEVICE(target), BUS(ap->i2c1->bus), &error_abort);
 
-            // Hacky...
-            dev->i2c1->initiator = ap->i2c1;
-            dev->i2c1->target = MXC_I2C_TARGET(target);
+            node = g_malloc0(sizeof(I2CNode));
+            node->elt = I2C_SLAVE(target);
+            QLIST_INSERT_HEAD(&dev->i2c1->targets, node, next);
         }
     }
 
