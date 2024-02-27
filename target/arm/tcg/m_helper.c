@@ -2245,6 +2245,14 @@ void arm_v7m_cpu_do_interrupt(CPUState *cs)
         break;
     case EXCP_PREFETCH_ABORT:
     case EXCP_DATA_ABORT:
+        // should crash on instruction or data abort
+        if (handle_abort(cs, env) == -1) {
+            qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_ERROR);
+        }
+        // if we successfully generated crash logs, reset the system
+        qemu_log("resetting...\n");
+        qemu_system_reset_request(SHUTDOWN_CAUSE_HOST_QMP_SYSTEM_RESET);
+
         /*
          * Note that for M profile we don't have a guest facing FSR, but
          * the env->exception.fsr will be populated by the code that
@@ -2344,15 +2352,7 @@ void arm_v7m_cpu_do_interrupt(CPUState *cs)
                                     env->v7m.secure);
             break;
         }
-        
-        // should crash on instruction or data abort
-        if (handle_abort(cs, env) == -1) {
-            qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_ERROR);
-        }
-        // if we successfully generated crash logs, reset the system
-        qemu_log("resetting...\n");
-        qemu_system_reset_request(SHUTDOWN_CAUSE_HOST_QMP_SYSTEM_RESET);
-        
+
         break;
     case EXCP_SEMIHOST:
         qemu_log_mask(CPU_LOG_INT,
