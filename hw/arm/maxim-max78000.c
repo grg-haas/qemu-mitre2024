@@ -22,7 +22,6 @@ struct entrypoint {
 static void maxim_max78000_set_entrypoint(void *opaque) {
     struct entrypoint *entrypoint = opaque;
     cpu_set_pc(entrypoint->cpu, entrypoint->addr);
-    g_free(entrypoint);
 }
 
 /* Board definition */
