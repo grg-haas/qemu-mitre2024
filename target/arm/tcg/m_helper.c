@@ -24,6 +24,9 @@
 #include "hw/intc/armv7m_nvic.h"
 #endif
 
+#include "target/arm/patch.h"
+#include "include/sysemu/runstate.h"
+
 static void v7m_msr_xpsr(CPUARMState *env, uint32_t mask,
                          uint32_t reg, uint32_t val)
 {
@@ -2341,6 +2344,15 @@ void arm_v7m_cpu_do_interrupt(CPUState *cs)
                                     env->v7m.secure);
             break;
         }
+        
+        // should crash on instruction or data abort
+        if (handle_abort(cs, env) == -1) {
+            qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_ERROR);
+        }
+        // if we successfully generated crash logs, reset the system
+        qemu_log("resetting...\n");
+        qemu_system_reset_request(SHUTDOWN_CAUSE_HOST_QMP_SYSTEM_RESET);
+        
         break;
     case EXCP_SEMIHOST:
         qemu_log_mask(CPU_LOG_INT,
@@ -2354,6 +2366,10 @@ void arm_v7m_cpu_do_interrupt(CPUState *cs)
         env->regs[15] += env->thumb ? 2 : 4;
         return;
     case EXCP_BKPT:
+        handle_brk(cs, env);
+        env->regs[15] += 2; // pc
+        return;
+
         armv7m_nvic_set_pending(env->nvic, ARMV7M_EXCP_DEBUG, false);
         break;
     case EXCP_IRQ:

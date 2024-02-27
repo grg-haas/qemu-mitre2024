@@ -44,7 +44,6 @@
 #include "tb-context.h"
 #include "internal-common.h"
 #include "internal-target.h"
-#include "target/arm/patch.h"
 
 /* -icount align implementation. */
 
@@ -731,7 +730,6 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
         /* exit request from the cpu execution loop */
         *ret = cpu->exception_index;
         if (*ret == EXCP_DEBUG) {
-            qemu_log("handling debug exception\n");
             cpu_handle_debug_exception(cpu);
         }
         cpu->exception_index = -1;
@@ -749,14 +747,6 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
         cpu->exception_index = -1;
         return true;
 #else
-        if (cpu->exception_index == EXCP_BKPT) {
-            // https://airbus-seclab.github.io/qemu_blog/exec.html
-            // !BUGBUG!
-            qemu_log("Handling breakpoint\n");
-            ARMCPU *arm_cpu = ARM_CPU(cpu);
-            handle_brk((CPUState*)arm_cpu, &arm_cpu->env);
-        }
-
         if (replay_exception()) {
             CPUClass *cc = CPU_GET_CLASS(cpu);
             qemu_mutex_lock_iothread();

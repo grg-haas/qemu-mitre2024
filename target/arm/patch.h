@@ -7,5 +7,6 @@
 #include "hw/core/cpu.h"
 
 int handle_brk(CPUState *cs, CPUARMState *env);
+int handle_abort(CPUState* cs, CPUARMState* env);
 
 #endif
