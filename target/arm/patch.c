@@ -58,33 +58,65 @@ int handle_brk(CPUState *cs, CPUARMState *env) {
     return 0;
 }
 
+static void dump_extra_reg_data(CPUState* cs,
+                                CPUARMState* env,
+                                FILE* dump_file) {
+    // dump the stack
+    uint32_t sp = env->regs[13];
+
+    // align sp
+    if (sp % 4)
+        sp -= sp % 4;
+
+    int rows = 4;
+    int cols = 16;
+
+    fprintf(dump_file, "Stack: \n");
+    char* stackmem = (char*)g_malloc(rows * cols);
+    if (cpu_memory_rw_debug(cs, sp, stackmem, sizeof(stackmem), 0) < 0) {
+        g_free(stackmem);
+        fprintf(stderr, "could not read stack addr: 0x%x\n", sp);
+        fprintf(dump_file, "%x: unable to read memory\n", sp);
+        return;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        fprintf(dump_file, "%x: ", sp + i * cols);
+        for (int j = cols - 1; j >= 0; j--) {
+            fprintf(dump_file, "%2x ", *(stackmem + i * cols + j));
+        }
+        fputc('\n', dump_file);
+    }
+
+    g_free(stackmem);
+}
+
 int handle_abort(CPUState* cs, CPUARMState* env) {
     // TODO: come up with unique file name
     FILE* dump_file = fopen("crashes/crash.txt", "w");
     if (dump_file == NULL)
         return -1;
 
+    // env->pc doesn't work for some reason; use reg r15 instead
+    uint32_t pc = env->regs[15];
     const char *fmt_str = "********* Data\\Instruction abort! *********\n"
                           "FAR = 0x%llx\t ELR = 0x%llx\n"
                           "Fuzz x0 = 0x%llx\t Fuzz x1 = 0x%llx\n";
-
     fprintf(dump_file, fmt_str, env->exception.vaddress,
-                                env->pc,
+                                pc,
                                 fuzz_cpu_state.regs[0],
                                 fuzz_cpu_state.regs[1]);
 
     fprintf(dump_file, "\n********** CPU State **********\n");
     cpu_dump_state(cs, dump_file, CPU_DUMP_CODE);
-    fprintf(dump_file, "\n********** Disassembly **********\n");
-    target_disas(dump_file, cs, env->pc-0x20, 0x40);
-    fprintf(dump_file, "\n********** Memory Dump **********\n");
 
-    // TODO: implement this
-    // dump_extra_reg_data(cs, env, dump_file);
+    fprintf(dump_file, "\n********** Disassembly **********\n");
+    target_disas(dump_file, cs, pc-0x20, 0x40);
+
+    fprintf(dump_file, "\n********** Memory Dump **********\n");
+    dump_extra_reg_data(cs, env, dump_file);
 
     fprintf(dump_file, "\n********** End of report **********\n");
-
     fclose(dump_file);
-
     return 0;
 }
