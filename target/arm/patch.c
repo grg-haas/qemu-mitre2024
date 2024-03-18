@@ -11,6 +11,9 @@
 
 #include <stdio.h>
 
+#define DUMP_ROWS 4
+#define DUMP_COLS (sizeof(uint32_t) * 4)
+
 static CPUARMState fuzz_cpu_state;
 
 int handle_brk(CPUState *cs, CPUARMState *env) {
@@ -68,8 +71,8 @@ static void dump_extra_reg_data(CPUState* cs,
     if (sp % 4)
         sp -= sp % 4;
 
-    int rows = 4;
-    int cols = 16;
+    int rows = DUMP_ROWS;
+    int cols = DUMP_COLS;
 
     fprintf(dump_file, "Stack: \n");
     char* stackmem = (char*)g_malloc(rows * cols);
